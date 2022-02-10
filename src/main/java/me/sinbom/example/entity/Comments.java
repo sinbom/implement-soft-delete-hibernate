@@ -13,7 +13,7 @@ import javax.persistence.*;
 @SQLDelete(sql = "UPDATE comments SET deleted = true WHERE id = ?")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Comments extends BaseEntity {
+public class Comments {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -25,15 +25,17 @@ public class Comments extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     private Posts post;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    private Users user;
+    @Column(nullable = false)
+    private boolean deleted;
 
-    public Comments(String content, Posts post, Users user) {
+    public Comments(String content, Posts post) {
         this.content = content;
         this.post = post;
         this.post.addComment(this);
-        this.user = user;
-        this.user.addComment(this);
+    }
+
+    public void delete() {
+        this.deleted = true;
     }
 
 }
