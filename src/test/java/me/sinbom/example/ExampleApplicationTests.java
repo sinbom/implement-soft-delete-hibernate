@@ -9,10 +9,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 
 import javax.persistence.EntityManager;
 import javax.persistence.PersistenceException;
 import javax.persistence.Query;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -64,9 +67,10 @@ class ExampleApplicationTests {
         entityManager.flush();
 
         // then
-        assertNull(entityManager.find(Posts.class, post.getId()));
-        assertNull(entityManager.find(Comments.class, comment.getId()));
-        assertNull(entityManager.find(Comments.class, comment2.getId()));
+        List<Posts> result = entityManager
+                .createQuery("SELECT p FROM Posts p LEFT JOIN FETCH p.comments", Posts.class)
+                .getResultList();
+        assertTrue(result.isEmpty());
     }
 
     @Test

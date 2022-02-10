@@ -235,7 +235,7 @@ void softDelete() {
 2022-02-10 20:52:47.456 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
 ```
 
-엔티티를 조회하는 select 쿼리에 delete = false 조건이 where절에 포함되어 삭제된 데이터를 제외하는 것을 확인할 수 있습니다.
+엔티티 객체의 deleted 필드 값을 true로 변경하여 삭제합니다. select 쿼리에 delete = false 조건이 where절에 포함되어 삭제된 데이터를 제외하는 것을 확인할 수 있습니다.
 
 ```java
 @Test
@@ -254,82 +254,66 @@ void softDeleteCascade() {
     entityManager.flush();
 
     // then
-    assertNull(entityManager.find(Posts.class, post.getId()));
-    assertNull(entityManager.find(Comments.class, comment.getId()));
-    assertNull(entityManager.find(Comments.class, comment2.getId()));
+    List<Posts> result = entityManager
+            .createQuery("SELECT p FROM Posts p LEFT JOIN FETCH p.comments", Posts.class)
+            .getResultList();
+    assertTrue(result.isEmpty());
 }
 ```
 
 ```text
-2022-02-10 21:04:43.517 DEBUG 14864 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-10 23:00:39.712 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
     UPDATE
         comments 
     SET
         deleted = true 
     WHERE
         id = ?
-2022-02-10 21:04:43.518 TRACE 14864 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 21:04:43.522 DEBUG 14864 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-10 23:00:39.713 TRACE 4204 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
+2022-02-10 23:00:39.716 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
     UPDATE
         comments 
     SET
         deleted = true 
     WHERE
         id = ?
-2022-02-10 21:04:43.523 TRACE 14864 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
-2022-02-10 21:04:43.524 DEBUG 14864 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-10 23:00:39.717 TRACE 4204 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
+2022-02-10 23:00:39.719 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
     UPDATE
         posts 
     SET
         deleted = true 
     WHERE
         id = ?
-2022-02-10 21:04:43.525 TRACE 14864 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 21:04:43.534 DEBUG 14864 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-10 23:00:39.720 TRACE 4204 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
+2022-02-10 23:00:39.855 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
     select
         posts0_.id as id1_1_0_,
+        comments1_.id as id1_0_1_,
         posts0_.content as content2_1_0_,
         posts0_.deleted as deleted3_1_0_,
-        posts0_.title as title4_1_0_ 
+        posts0_.title as title4_1_0_,
+        comments1_.content as content2_0_1_,
+        comments1_.deleted as deleted3_0_1_,
+        comments1_.post_id as post_id4_0_1_,
+        comments1_.post_id as post_id4_0_0__,
+        comments1_.id as id1_0_0__ 
     from
         posts posts0_ 
+    left outer join
+        comments comments1_ 
+            on posts0_.id=comments1_.post_id 
+            and (
+                comments1_.deleted = false
+            ) 
     where
-        posts0_.id=? 
-        and (
+        (
             posts0_.deleted = false
         )
-2022-02-10 21:04:43.536 TRACE 14864 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 21:04:43.546 DEBUG 14864 --- [    Test worker] org.hibernate.SQL                        : 
-    select
-        comments0_.id as id1_0_0_,
-        comments0_.content as content2_0_0_,
-        comments0_.deleted as deleted3_0_0_,
-        comments0_.post_id as post_id4_0_0_ 
-    from
-        comments comments0_ 
-    where
-        comments0_.id=? 
-        and (
-            comments0_.deleted = false
-        )
-2022-02-10 21:04:43.547 TRACE 14864 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 21:04:43.548 DEBUG 14864 --- [    Test worker] org.hibernate.SQL                        : 
-    select
-        comments0_.id as id1_0_0_,
-        comments0_.content as content2_0_0_,
-        comments0_.deleted as deleted3_0_0_,
-        comments0_.post_id as post_id4_0_0_ 
-    from
-        comments comments0_ 
-    where
-        comments0_.id=? 
-        and (
-            comments0_.deleted = false
-        )
-2022-02-10 21:04:43.549 TRACE 14864 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
 ```
 
 엔티티의 상태를 removed로 변경하여 cascade remove 옵션이 적용된 연관관계 엔티티를 대상으로 @SQLDelete 애노테이션에 설정된 쿼리를 발생시켜 모두 삭제합니다.
+조인을 사용하는 select 쿼리에 deleted = false 조건이 where절과 on절에 포함되어 삭제된 데이터를 제외하는 것을 확인할 수 있습니다.
 
 ```java
 @Test
