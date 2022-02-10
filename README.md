@@ -333,7 +333,7 @@ void softDeleteCascade() {
 
 ```java
 @Test
-    void softDeleteUniqueConstraint() {
+void softDeleteUniqueConstraint() {
     // given
     String sameTitle = "[FAAI] 공지사항";
     Posts post = new Posts(sameTitle, "오늘은 다들 일하지 말고 집에 가세요!");
@@ -415,7 +415,7 @@ post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title �
 
 ![이미지 이름](unique_index_explain.PNG)
 
-100000개의 데이터가 존재하는 posts 테이블을 대상으로 조회한 실행계획입니다. 조건절에 deleted = false가 없는 쿼리는 인덱스가 적용되지 않습니다.
+100000개의 데이터가 존재하는 posts 테이블을 title 기준으로 조회하는 쿼리의 실행계획입니다. 조건절에 deleted = false가 없는 쿼리는 인덱스가 적용되지 않습니다.
 앞서 구현한 방식대로 hibernate 환경에서 soft delete를 사용한다면 모든 조회 쿼리에 deleted = false가 포함되어 unique index가 잘 적용된다는 것을 알 수 있습니다.
 
 
