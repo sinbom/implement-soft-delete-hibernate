@@ -20,7 +20,7 @@ Soft Delete와 Hard Delete를 사용했을 때 여러가지 관점에서 비교�
 |삭제|UPDATE table SET delete_flag = true WHERE id = ?|DELETE table FROM WHERE id = ?|Soft Delete는 삭제 구분 값을 수정하여 논리적으로 데이터를 삭제 처리합니다.|
 |조회|SELECT * FROM table WHERE delete_flag = false|SELECT * FROM table|Soft Delete는 삭제 처리된 데이터가 포함되어 존재하기 때문에 모든 조회 쿼리에 delete_flag = false 조건이 필요합니다.|
 |복원|update 쿼리로 삭제 구분 값을 변경하여 복원합니다.|백업 또는 쿼리 로그를 통해 복원합니다.|Hard Delete는 백업과 장애 발생 시점의 간격과 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.|
-|용량|삭제시 테이블의 용량이 감소하지 않습니다.|삭제시 테이블의 용량이 감소합니다.|Soft Delete는 데이터가 물리적으로 삭제되지 않기 때문에 지속적으로 테이블의 용량이 증가합니다.|
+|용량|삭제시 테이블 및 인덱스의 용량이 감소하지 않습니다.|삭제시 테이블 및 인덱스의 용량이 감소합니다.|Soft Delete는 데이터가 물리적으로 삭제되지 않기 때문에 지속적으로 테이블 및 인덱스의 용량이 증가합니다.|
 |unique index|삭제 처리된 값을 필터링 할 수 있는 partial index를 사용하여 unique index를 생성합니다. 만약 지원하지 않는 DBMS를 사용하는 경우 삭제된 데이터와 값이 중복되어 unique 제약조건을 위반할 수 있으므로 삭제 구분 컬럼으로 delete_at(timestamp)을 사용하고 index 구성에 포함시킵니다.|중복될 수 없는 값들로 unique index를 구성합니다.|Sofe Delete는 partial index를 사용할 수 없는 경우 삭제 처리된 데이터가 인덱스에 포함됩니다.
 |on delete cascade|삭제 구분 값을 수정하여 삭제 처리하기 때문에 발생하지 않습니다. 애플리케이션에서 쿼리를 발생시켜 참조 테이블을 삭제 처리하거나 데이터베이스의 트리거를 사용해야합니다.|삭제시 설정된 cascade가 발생합니다.|Soft Delete는 삭제 처리시 발생하는 cascade를 직접 구현해야합니다.|
 
@@ -109,19 +109,19 @@ public class Comments {
     }
 ```
 
+예제 소스 코드에서 사용할 게시글과 댓글 엔티티 클래스입니다. soft delete를 구현하기 위해 boolean타입의 deleted 필드로 삭제 유무를 구분하고 delete 메소드를 통해 객체의 상태를 변경하여 삭제합니다.
+@Where 애노테이션이 지정된 엔티티를 조회할 때 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 삭제 구분 컬럼은 sofe delete에서 
+삭제된 데이터를 제외하기 위해서 반드시 포함되어야하지만 개발자가 실수로 조건절에서 누락할 수 있기 때문에 애노테이션을 통해 글로벌하게 설정하는 것이 좋습니다. 또한 연관관계 엔티티의 패치 타입 전략을 Lazy하게 가져가는 경우
+Lazy Loading으로 발생하는 조회 쿼리의 조건절에도 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 Native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다. 
+@SQLDelete 애노테이션이 지정된 엔티티의 상태를 removed로 변경할 때 발생하는 쿼리를 설정할 수 있습니다. soft delete는 delete 쿼리가 발생하지 않기 때문에
+on delete cascade를 사용할 수 없지만 @SQLDelete와 cascade 옵션을 함께 사용하면 soft delete에서 cascade를 별도의 데이터베이스 트리거나 소스 코드 없이도 쉽게 구현할 수 있습니다.
+
 ```roomsql
 CREATE UNIQUE INDEX UK_POSTS_TITLE_INDEX ON posts(title) WHERE deleted = false; -- postgresql
 ```
 
-예제 소스 코드에서 사용할 게시글과 댓글 엔티티 클래스입니다. soft delete를 구현하기 위해 boolean타입의 deleted 필드로 삭제 유무를 구분하고 delete 메소드를 통해 객체의 상태를 변경하여 삭제합니다.
-사용하고 있는 DBMS가 partial index를 지원하는 경우 삭제된 데이터를 인덱스에서 필터링하여 사용합니다.
-
-@Where 애노테이션이 지정된 엔티티를 조회할 때 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 삭제 구분 컬럼은 sofe delete에서 
-삭제된 데이터를 제외하기 위해서 반드시 포함되어야하지만 개발자가 실수로 조건절에서 누락할 수 있기 때문에 애노테이션을 통해 글로벌하게 설정하는 것이 좋습니다. 또한 연관관계 엔티티의 패치 타입 전략을 Lazy하게 가져가는 경우
-Lazy Loading으로 발생하는 조회 쿼리의 조건절에도 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 Native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다. 
-
-@SQLDelete 애노테이션이 지정된 엔티티의 상태를 removed로 변경할 때 발생하는 쿼리를 설정할 수 있습니다. soft delete는 delete 쿼리가 발생하지 않기 때문에
-on delete cascade를 사용할 수 없지만 @SQLDelete와 cascade 옵션을 함께 사용하면 soft delete에서 cascade를 별도의 데이터베이스 트리거나 소스 코드 없이도 쉽게 구현할 수 있습니다.
+unique constraint를 적용해야하는 경우 사용하고 있는 DBMS가 partial index를 지원한다면 삭제된 데이터를 인덱스에서 필터링하여 제거된 데이터를 제외합니다. partial index는 JPA 스펙에 포함되어 있지 않기 때문에
+직정 쿼리를 통해 생성해야합니다.
 
 ### 테스트
 
@@ -317,7 +317,7 @@ void softDeleteCascade() {
 
 ```java
 @Test
-void softDeleteUniqueConstraint() {
+void softDeleteUniqueIndex() {
     // given
     String sameTitle = "[FAAI] 공지사항";
     Posts post = new Posts(sameTitle, "오늘은 다들 일하지 말고 집에 가세요!");
@@ -404,11 +404,18 @@ post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title �
 
 
 ### 발생할 수 있는 문제점
+
+삭제된 데이터를 참조하고 있는 경우
+
+그 경우는 왜 발생하냐? 프록시 엔티티로 연관관계 매핑하거나 매핑하기전 엔티티를 조회할 때는 삭제가 안되어있었는데 동시성 문제로 삭제되는 경우
+
 ### 해결방안
 #### @NotFound With Eager Fetch Join
-#### Locking(애플리케이션 락, 분산 락, 데이터베이스 락)
-
+#### Optimistic Locking
+#### Pessmistic Locking
+#### Etc synchronous, distribute locking(Redis)
 
 ## 마무리
 
 TODO 반드시 Soft Delete를 사용하는 것보다는 상황과 필요에 따라 Soft Delete를 사용하는 것이 좋다는 내용.
+TODO 그리고 단순히 삭제 구분 값 하나를 추가한 것만으로는 Soft Delete를 구현했다고는 볼 수 없으며 고려해야할 점들이 많다는 내용.
