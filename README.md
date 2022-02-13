@@ -26,6 +26,61 @@ Soft Delete와 Hard Delete를 사용했을 때 여러가지 관점에서 비교�
 
 TODO 더 설명할 필요가 있는 내용 추가
 
+```postgresql
+EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted = false; -- (1)
+
+EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted = true; -- (2)
+
+EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted != false; -- (3)
+
+EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted IS NOT false; -- (4)
+
+EXPLAIN ANALYZE SELECT * FROM posts WHERE title = ''; -- (5)
+```
+
+optimizer가 sequential scan이 아닌 index scan을 선택할 수 있도록 100000개의 데이터를 insert한 후
+어떤 조회 쿼리가 partial index가 적용될 수 있는지 각 쿼리의 실행계획을 확인해보겠습니다.
+
+```text
+(1)
+Index Scan using uk_posts_title_index on posts  (cost=0.42..8.44 rows=1 width=31) (actual time=0.015..0.015 rows=0 loops=1)
+  Index Cond: ((title)::text = ''::text)
+Planning Time: 0.058 ms
+Execution Time: 0.027 ms
+
+(2)
+Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=13.081..13.083 rows=0 loops=1)
+  Filter: (deleted AND ((title)::text = ''::text))
+  Rows Removed by Filter: 100000
+Planning Time: 12.056 ms
+Execution Time: 13.114 ms
+
+(3)
+Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=11.654..11.654 rows=0 loops=1)
+  Filter: (deleted AND ((title)::text = ''::text))
+  Rows Removed by Filter: 100000
+Planning Time: 0.084 ms
+Execution Time: 11.675 ms
+
+(4)
+Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=11.223..11.223 rows=0 loops=1)
+  Filter: ((deleted IS NOT FALSE) AND ((title)::text = ''::text))
+  Rows Removed by Filter: 100000
+Planning Time: 0.134 ms
+Execution Time: 11.254 ms
+
+(5)
+Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=11.365..11.366 rows=0 loops=1)
+  Filter: ((title)::text = ''::text)
+  Rows Removed by Filter: 100000
+Planning Time: 3.481 ms
+Execution Time: 11.508 ms
+```
+
+deleted = false 조건을 지정하여 생성한 partial index는 반드시 완전히 동일한 deleted = false 조건이 포함된 쿼리에만 적용됩니다.
+(1)번의 조회 쿼리를 제외한 모든 쿼리의 실행계획은 sequential scan이 선택되었습니다.
+
+
 ## JPA + Hibernate 개발 환경에서의 구현
 
 Spring Boot 기반의 웹 애플리케이션을 Hibernate를 사용해서 개발할 때 soft delete를 구현하는 방법과 주의해야할 점에 대해서 알아보겠습니다.
@@ -110,24 +165,51 @@ public class Comments {
 ```
 
 예제 소스 코드에서 사용할 게시글과 댓글 엔티티 클래스입니다. soft delete를 구현하기 위해 boolean타입의 deleted 필드로 삭제 유무를 구분하고 delete 메소드를 통해 객체의 상태를 변경하여 삭제합니다.
+
+```java
+@Where(clause = "deleted = false")
+```
 @Where 애노테이션이 지정된 엔티티를 조회할 때 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 삭제 구분 컬럼은 sofe delete에서 
 삭제된 데이터를 제외하기 위해서 반드시 포함되어야하지만 개발자가 실수로 조건절에서 누락할 수 있기 때문에 애노테이션을 통해 글로벌하게 설정하는 것이 좋습니다. 또한 연관관계 엔티티의 패치 타입 전략을 Lazy하게 가져가는 경우
 Lazy Loading으로 발생하는 조회 쿼리의 조건절에도 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 Native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다. 
+
+```java
+@SQLDelete(sql = "UPDATE comments SET deleted = true WHERE id = ?")
+```
+
 @SQLDelete 애노테이션이 지정된 엔티티의 상태를 removed로 변경할 때 발생하는 쿼리를 설정할 수 있습니다. soft delete는 delete 쿼리가 발생하지 않기 때문에
 on delete cascade를 사용할 수 없지만 @SQLDelete와 cascade 옵션을 함께 사용하면 soft delete에서 cascade를 별도의 데이터베이스 트리거나 소스 코드 없이도 쉽게 구현할 수 있습니다.
 
-```roomsql
-CREATE UNIQUE INDEX UK_POSTS_TITLE_INDEX ON posts(title) WHERE deleted = false; -- postgresql
+```postgresql
+CREATE UNIQUE INDEX IF NOT EXISTS UK_POSTS_TITLE_INDEX ON posts(title) WHERE deleted = false;
 ```
 
 unique constraint를 적용해야하는 경우 사용하고 있는 DBMS가 partial index를 지원한다면 삭제된 데이터를 인덱스에서 필터링하여 제거된 데이터를 제외합니다. partial index는 JPA 스펙에 포함되어 있지 않기 때문에
-직정 쿼리를 통해 생성해야합니다.
+애노테이션 기반으로 생성할 수 없습니다. 
+
+```yaml
+spring:
+  sql:
+    init:
+      mode: always
+      
+logging:
+  level:
+    springframework:
+      jdbc:
+        datasource:
+          init:
+            ScriptUtils: DEBUG
+```
+
+인덱스 생성 쿼리를 schema.sql 파일에 작성하고 classpath에 위치합니다. spring.sql.init.mode 프로퍼티를 always로 설정하여
+애플리케이션 실행시 sql script로 초기화하도록 설정합니다. 초기화 script 파일에서 발생한 쿼리 로그를 출력혀려면 로깅 레벨 설정이 필요합니다.
 
 ### 테스트
 
 ```java
 @Test
-void softDelete() {
+void SoftDelete를_사용한다() {
     // given
     Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
     Comments comment = new Comments("우와아~ 집에 갑시다.", post);
@@ -137,7 +219,6 @@ void softDelete() {
     entityManager.persist(post);
     entityManager.persist(comment);
     entityManager.persist(comment2);
-    entityManager.flush();
     post.delete();
     comment.delete();
     comment2.delete();
@@ -152,7 +233,37 @@ void softDelete() {
 ```
 
 ```text
-2022-02-10 20:52:47.414 DEBUG 7184 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:27:44.677 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        posts
+        (content, deleted, title) 
+    values
+        (?, ?, ?)
+2022-02-13 23:27:44.679 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:27:44.680 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:27:44.680 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:27:44.703 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-13 23:27:44.703 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
+2022-02-13 23:27:44.703 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:27:44.704 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
+2022-02-13 23:27:44.729 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-13 23:27:44.730 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [노트북 가져가도 되나요?]
+2022-02-13 23:27:44.730 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:27:44.731 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
+2022-02-13 23:27:44.743 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
     update
         posts 
     set
@@ -161,11 +272,11 @@ void softDelete() {
         title=? 
     where
         id=?
-2022-02-10 20:52:47.415 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-10 20:52:47.415 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
-2022-02-10 20:52:47.416 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-10 20:52:47.416 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [1]
-2022-02-10 20:52:47.419 DEBUG 7184 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:27:44.744 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:27:44.744 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-13 23:27:44.744 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:27:44.744 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [1]
+2022-02-13 23:27:44.748 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
     update
         comments 
     set
@@ -174,11 +285,11 @@ void softDelete() {
         post_id=? 
     where
         id=?
-2022-02-10 20:52:47.420 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
-2022-02-10 20:52:47.421 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
-2022-02-10 20:52:47.421 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
-2022-02-10 20:52:47.421 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [1]
-2022-02-10 20:52:47.422 DEBUG 7184 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:27:44.748 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
+2022-02-13 23:27:44.749 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-13 23:27:44.749 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
+2022-02-13 23:27:44.749 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [1]
+2022-02-13 23:27:44.758 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
     update
         comments 
     set
@@ -187,11 +298,11 @@ void softDelete() {
         post_id=? 
     where
         id=?
-2022-02-10 20:52:47.423 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [노트북 가져가도 되나요?]
-2022-02-10 20:52:47.424 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
-2022-02-10 20:52:47.424 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
-2022-02-10 20:52:47.424 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [2]
-2022-02-10 20:52:47.439 DEBUG 7184 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:27:44.758 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [노트북 가져가도 되나요?]
+2022-02-13 23:27:44.758 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-13 23:27:44.758 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
+2022-02-13 23:27:44.758 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [2]
+2022-02-13 23:27:44.768 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
     select
         posts0_.id as id1_1_0_,
         posts0_.content as content2_1_0_,
@@ -204,8 +315,8 @@ void softDelete() {
         and (
             posts0_.deleted = false
         )
-2022-02-10 20:52:47.441 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 20:52:47.452 DEBUG 7184 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:27:44.769 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
+2022-02-13 23:27:44.777 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
     select
         comments0_.id as id1_0_0_,
         comments0_.content as content2_0_0_,
@@ -218,8 +329,8 @@ void softDelete() {
         and (
             comments0_.deleted = false
         )
-2022-02-10 20:52:47.453 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 20:52:47.455 DEBUG 7184 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:27:44.777 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
+2022-02-13 23:27:44.780 DEBUG 4209 --- [    Test worker] org.hibernate.SQL                        : 
     select
         comments0_.id as id1_0_0_,
         comments0_.content as content2_0_0_,
@@ -232,14 +343,14 @@ void softDelete() {
         and (
             comments0_.deleted = false
         )
-2022-02-10 20:52:47.456 TRACE 7184 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
+2022-02-13 23:27:44.780 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
 ```
 
 엔티티 객체의 deleted 필드 값을 true로 변경하여 삭제합니다. select 쿼리에 delete = false 조건이 where절에 포함되어 삭제된 데이터를 제외하는 것을 확인할 수 있습니다.
 
 ```java
 @Test
-void softDeleteCascade() {
+void SoftDelete에서_CascadeRemove를_사용한다() {
     // given
     Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
     Comments comment = new Comments("우와아~ 집에 갑시다.", post);
@@ -249,7 +360,6 @@ void softDeleteCascade() {
     entityManager.persist(post);
     entityManager.persist(comment);
     entityManager.persist(comment2);
-    entityManager.flush();
     entityManager.remove(post); // on soft delete cascade
     entityManager.flush();
 
@@ -262,31 +372,61 @@ void softDeleteCascade() {
 ```
 
 ```text
-2022-02-10 23:00:39.712 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:21.475 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        posts
+        (content, deleted, title) 
+    values
+        (?, ?, ?)
+2022-02-13 23:29:21.477 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:29:21.477 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:29:21.478 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:29:21.500 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-13 23:29:21.500 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
+2022-02-13 23:29:21.500 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:29:21.500 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
+2022-02-13 23:29:21.527 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-13 23:29:21.528 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [노트북 가져가도 되나요?]
+2022-02-13 23:29:21.528 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:29:21.528 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [1]
+2022-02-13 23:29:21.539 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
     UPDATE
         comments 
     SET
         deleted = true 
     WHERE
         id = ?
-2022-02-10 23:00:39.713 TRACE 4204 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 23:00:39.716 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:21.539 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
+2022-02-13 23:29:21.545 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
     UPDATE
         comments 
     SET
         deleted = true 
     WHERE
         id = ?
-2022-02-10 23:00:39.717 TRACE 4204 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
-2022-02-10 23:00:39.719 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:21.546 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
+2022-02-13 23:29:21.548 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
     UPDATE
         posts 
     SET
         deleted = true 
     WHERE
         id = ?
-2022-02-10 23:00:39.720 TRACE 4204 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
-2022-02-10 23:00:39.855 DEBUG 4204 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:21.548 TRACE 4223 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [1]
+2022-02-13 23:29:21.594 DEBUG 4223 --- [    Test worker] org.hibernate.SQL                        : 
     select
         posts0_.id as id1_1_0_,
         comments1_.id as id1_0_1_,
@@ -317,7 +457,7 @@ void softDeleteCascade() {
 
 ```java
 @Test
-void softDeleteUniqueIndex() {
+void SoftDelete에서_UniqueConstraint를_사용한다() {
     // given
     String sameTitle = "[FAAI] 공지사항";
     Posts post = new Posts(sameTitle, "오늘은 다들 일하지 말고 집에 가세요!");
@@ -326,7 +466,6 @@ void softDeleteUniqueIndex() {
 
     // when
     entityManager.persist(post);
-    entityManager.flush();
     post.delete();
     entityManager.flush();
     entityManager.persist(post2);
@@ -334,27 +473,24 @@ void softDeleteUniqueIndex() {
     // then
     PersistenceException exception = assertThrows(
         PersistenceException.class,
-        () -> {
-            entityManager.flush();
-            entityManager.persist(post3);
-        }
+        () -> entityManager.persist(post3)
     );
     assertEquals(ConstraintViolationException.class, exception.getCause().getClass());
 }
 ```
 
 ```text
-2022-02-10 22:16:58.626 DEBUG 12820 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:53.099 DEBUG 4241 --- [    Test worker] org.hibernate.SQL                        : 
     insert 
     into
         posts
         (content, deleted, title) 
     values
         (?, ?, ?)
-2022-02-10 22:16:58.632 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-10 22:16:58.634 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
-2022-02-10 22:16:58.634 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-10 22:16:58.662 DEBUG 12820 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:53.101 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:29:53.101 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:29:53.101 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:29:53.132 DEBUG 4241 --- [    Test worker] org.hibernate.SQL                        : 
     update
         posts 
     set
@@ -363,49 +499,74 @@ void softDeleteUniqueIndex() {
         title=? 
     where
         id=?
-2022-02-10 22:16:58.663 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-10 22:16:58.668 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
-2022-02-10 22:16:58.668 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-10 22:16:58.670 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [9]
-2022-02-10 22:16:58.675 DEBUG 12820 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:53.132 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:29:53.132 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-13 23:29:53.132 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:29:53.133 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [1]
+2022-02-13 23:29:53.140 DEBUG 4241 --- [    Test worker] org.hibernate.SQL                        : 
     insert 
     into
         posts
         (content, deleted, title) 
     values
         (?, ?, ?)
-2022-02-10 22:16:58.676 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-10 22:16:58.676 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
-2022-02-10 22:16:58.676 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-10 22:16:58.682 DEBUG 12820 --- [    Test worker] org.hibernate.SQL                        : 
+2022-02-13 23:29:53.140 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:29:53.140 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:29:53.140 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:29:53.143 DEBUG 4241 --- [    Test worker] org.hibernate.SQL                        : 
     insert 
     into
         posts
         (content, deleted, title) 
     values
         (?, ?, ?)
-2022-02-10 22:16:58.682 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-10 22:16:58.683 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
-2022-02-10 22:16:58.683 TRACE 12820 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-10 22:16:58.689  WARN 12820 --- [    Test worker] o.h.engine.jdbc.spi.SqlExceptionHelper   : SQL Error: 0, SQLState: 23505
-2022-02-10 22:16:58.689 ERROR 12820 --- [    Test worker] o.h.engine.jdbc.spi.SqlExceptionHelper   : 오류: 중복된 키 값이 "uk_posts_title_index" 고유 제약 조건을 위반함
-  Detail: (title)=([FAAI] 공지사항) 키가 이미 있습니다.
-2022-02-10 22:16:58.707  INFO 12820 --- [    Test worker] o.s.t.c.transaction.TransactionContext   : Rolled back transaction for test: [DefaultTestContext@3f2ef586 testClass = ExampleApplicationTests, testInstance = me.sinbom.example.ExampleApplicationTests@5b29d699, testMethod = softDeleteUniqueIndex@ExampleApplicationTests, testException = [null], mergedContextConfiguration = [WebMergedContextConfiguration@751d3241 testClass = ExampleApplicationTests, locations = '{}', classes = '{class me.sinbom.example.ExampleApplication}', contextInitializerClasses = '[]', activeProfiles = '{test}', propertySourceLocations = '{}', propertySourceProperties = '{org.springframework.boot.test.context.SpringBootTestContextBootstrapper=true}', contextCustomizers = set[org.springframework.boot.test.autoconfigure.actuate.metrics.MetricsExportContextCustomizerFactory$DisableMetricExportContextCustomizer@6f3c660a, org.springframework.boot.test.autoconfigure.properties.PropertyMappingContextCustomizer@0, org.springframework.boot.test.autoconfigure.web.servlet.WebDriverContextCustomizerFactory$Customizer@74bada02, org.springframework.boot.test.context.filter.ExcludeFilterContextCustomizer@6ad3381f, org.springframework.boot.test.json.DuplicateJsonObjectContextCustomizerFactory$DuplicateJsonObjectContextCustomizer@34a875b3, org.springframework.boot.test.mock.mockito.MockitoContextCustomizer@0, org.springframework.boot.test.web.client.TestRestTemplateContextCustomizer@4f1bfe23, org.springframework.boot.test.context.SpringBootTestArgs@1, org.springframework.boot.test.context.SpringBootTestWebEnvironment@6babf3bf], resourceBasePath = 'src/main/webapp', contextLoader = 'org.springframework.boot.test.context.SpringBootContextLoader', parent = [null]], attributes = map['org.springframework.test.context.web.ServletTestExecutionListener.activateListener' -> true, 'org.springframework.test.context.web.ServletTestExecutionListener.populatedRequestContextHolder' -> true, 'org.springframework.test.context.web.ServletTestExecutionListener.resetRequestContextHolder' -> true, 'org.springframework.test.context.event.ApplicationEventsTestExecutionListener.recordApplicationEvents' -> false]]
-
+2022-02-13 23:29:53.144 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-13 23:29:53.144 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-13 23:29:53.144 TRACE 4241 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-13 23:29:53.148  WARN 4241 --- [    Test worker] o.h.engine.jdbc.spi.SqlExceptionHelper   : SQL Error: 0, SQLState: 23505
+2022-02-13 23:29:53.148 ERROR 4241 --- [    Test worker] o.h.engine.jdbc.spi.SqlExceptionHelper   : ERROR: duplicate key value violates unique constraint "uk_posts_title_index"
+  Detail: Key (title)=([FAAI] 공지사항) already exists.
 ```
 
 post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title 컬럼의 데이터가 존재하지만 partial index에서 필터링되어 unique constraint를 위반하지 않습니다.
 반면 post2가 삭제되지 않은 상태에서 post3를 insert하게 되면 constraint 위반 에러가 발생합니다.
 
-![이미지 이름](unique_index_explain.PNG)
-
-100000개의 데이터가 존재하는 posts 테이블을 title 기준으로 조회하는 쿼리의 실행계획입니다. 조건절에 deleted = false가 없는 쿼리는 인덱스가 적용되지 않습니다.
-앞서 구현한 방식대로 hibernate 환경에서 soft delete를 사용한다면 모든 조회 쿼리에 deleted = false가 포함되어 unique index가 잘 적용된다는 것을 알 수 있습니다.
-
-
 ### 발생할 수 있는 문제점
 
-삭제된 데이터를 참조하고 있는 경우
+@Where 애노테이션이 적용된 엔티티의 연관관계가 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않습니다.
+하지만 lazy loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다.
+
+```java
+@Test
+void ManyToOne연관관계_엔티티_조인쿼리와_지연로딩으로_발생하는_쿼리가_다르다() {
+    // given
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+    Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+
+    // when
+    entityManager.persist(post);
+    entityManager.persist(comment);
+    entityManager.flush();
+    post.delete();
+    entityManager.flush();
+
+    // then
+    List<Comments> result = entityManager
+            .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
+            .getResultList();
+    assertEquals(result.size(), 1);
+    assertThrows(
+            EntityNotFoundException.class,
+            () -> {
+                entityManager.clear();
+                Comments comments = entityManager.find(Comments.class, comment.getId());
+                comments.getPost().getContent(); // lazy loading
+            }
+    );
+}
+```
+
+삭제된 데이터를 참조하고 있는 경우 ... TODO
 
 그 경우는 왜 발생하냐? 프록시 엔티티로 연관관계 매핑하거나 매핑하기전 엔티티를 조회할 때는 삭제가 안되어있었는데 동시성 문제로 삭제되는 경우
 

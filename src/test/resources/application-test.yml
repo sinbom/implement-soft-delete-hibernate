@@ -1,13 +1,16 @@
 spring:
+  sql:
+    init:
+      mode: always
   datasource:
-    url: jdbc:postgresql://localhost:5432/postgres?useSSL=false& rewriteBatchedInserts=true
+    url: jdbc:postgresql://localhost:5432/postgres
     username: postgres
     password: 1234
     driver-class-name: org.postgresql.Driver
   jpa:
     generate-ddl: false
     hibernate:
-      ddl-auto: create
+      ddl-auto: validate
       use-new-id-generator-mappings: false
     properties:
       hibernate:
@@ -16,12 +19,17 @@ spring:
         default_batch_fetch_size: 1000
     open-in-view: false
 
-#logging:
-#  level:
-#    org:
-#      hibernate:
-#        SQL: DEBUG
-#        type:
-#          descriptor:
-#            sql:
-#              BasicBinder: TRACE
+logging:
+  level:
+    org:
+      hibernate:
+        SQL: DEBUG
+        type:
+          descriptor:
+            sql:
+              BasicBinder: TRACE
+      springframework:
+        jdbc:
+          datasource:
+            init:
+              ScriptUtils: DEBUG

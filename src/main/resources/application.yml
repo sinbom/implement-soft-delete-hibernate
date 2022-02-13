@@ -1,4 +1,7 @@
 spring:
+  sql:
+    init:
+      mode: always
   datasource:
     url: jdbc:postgresql://localhost:5432/postgres
     username: postgres
@@ -7,7 +10,7 @@ spring:
   jpa:
     generate-ddl: false
     hibernate:
-      ddl-auto: create
+      ddl-auto: validate
       use-new-id-generator-mappings: false
     properties:
       hibernate:
@@ -25,3 +28,8 @@ logging:
           descriptor:
             sql:
               BasicBinder: TRACE
+      springframework:
+        jdbc:
+          datasource:
+            init:
+              ScriptUtils: DEBUG
