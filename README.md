@@ -534,11 +534,92 @@ post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title �
 ### 발생할 수 있는 문제점
 
 @Where 애노테이션이 적용된 엔티티의 연관관계가 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않습니다.
-하지만 lazy loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다.
+하지만 lazy loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다. 만약 부모 엔티티로 참조하고 있는 데이터가 삭제 처리된 데이터일 경우
+문제가 발생할 수 있습니다.
 
 ```java
 @Test
-void ManyToOne연관관계_엔티티_조인쿼리와_지연로딩으로_발생하는_쿼리가_다르다() {
+void 삭제처리된_부모엔티티를_패치조인으로_조회하면_삭제된_데이터가_정상조회되어_데이터_일관성_불일치가_발생한다() {
+    // given
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+    Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+
+     // when
+    entityManager.persist(post);
+    entityManager.persist(comment);
+    post.delete();
+    entityManager.flush();
+    entityManager.clear();
+    List<Comments> result = entityManager
+            .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
+            .getResultList();
+
+    // then
+    assertEquals(result.size(), 1);
+    assertTrue(result.get(0).getPost().isDeleted());
+}
+```
+
+```text
+2022-02-14 01:38:58.872 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        posts
+        (content, deleted, title) 
+    values
+        (?, ?, ?)
+2022-02-14 01:38:58.874 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-14 01:38:58.874 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-14 01:38:58.874 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-14 01:38:58.885 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-14 01:38:58.885 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
+2022-02-14 01:38:58.885 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-14 01:38:58.885 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [13]
+2022-02-14 01:38:58.899 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
+    update
+        posts 
+    set
+        content=?,
+        deleted=?,
+        title=? 
+    where
+        id=?
+2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [13]
+2022-02-14 01:38:58.946 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        comments0_.id as id1_0_0_,
+        posts1_.id as id1_1_1_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_,
+        posts1_.content as content2_1_1_,
+        posts1_.deleted as deleted3_1_1_,
+        posts1_.title as title4_1_1_ 
+    from
+        comments comments0_ 
+    inner join
+        posts posts1_ 
+            on comments0_.post_id=posts1_.id 
+    where
+        (
+            comments0_.deleted = false
+        )
+```
+
+TODO
+
+```java
+@Test
+void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이터_일관성_불일치로인해_에러가_발생한다() {
     // given
     Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
     Comments comment = new Comments("우와아~ 집에 갑시다.", post);
@@ -546,29 +627,86 @@ void ManyToOne연관관계_엔티티_조인쿼리와_지연로딩으로_발생�
     // when
     entityManager.persist(post);
     entityManager.persist(comment);
-    entityManager.flush();
     post.delete();
     entityManager.flush();
+    entityManager.clear();
+    Comments comments = entityManager.find(Comments.class, comment.getId());
 
     // then
-    List<Comments> result = entityManager
-            .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
-            .getResultList();
-    assertEquals(result.size(), 1);
     assertThrows(
-            EntityNotFoundException.class,
-            () -> {
-                entityManager.clear();
-                Comments comments = entityManager.find(Comments.class, comment.getId());
-                comments.getPost().getContent(); // lazy loading
-            }
+        EntityNotFoundException.class,
+        () -> comments.getPost().getContent() // lazy loading & exception occurs
     );
 }
 ```
 
-삭제된 데이터를 참조하고 있는 경우 ... TODO
+```text
+2022-02-14 01:39:25.030 DEBUG 5605 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        posts
+        (content, deleted, title) 
+    values
+        (?, ?, ?)
+2022-02-14 01:39:25.032 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-14 01:39:25.032 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-14 01:39:25.033 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-14 01:39:25.039 DEBUG 5605 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-14 01:39:25.040 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
+2022-02-14 01:39:25.040 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-14 01:39:25.040 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [14]
+2022-02-14 01:39:25.049 DEBUG 5605 --- [    Test worker] org.hibernate.SQL                        : 
+    update
+        posts 
+    set
+        content=?,
+        deleted=?,
+        title=? 
+    where
+        id=?
+2022-02-14 01:39:25.050 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-14 01:39:25.050 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-14 01:39:25.050 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-14 01:39:25.050 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [14]
+2022-02-14 01:39:25.056 DEBUG 5605 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        comments0_.id as id1_0_0_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_ 
+    from
+        comments comments0_ 
+    where
+        comments0_.id=? 
+        and (
+            comments0_.deleted = false
+        )
+2022-02-14 01:39:25.057 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [11]
+2022-02-14 01:39:25.068 DEBUG 5605 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        posts0_.id as id1_1_0_,
+        posts0_.content as content2_1_0_,
+        posts0_.deleted as deleted3_1_0_,
+        posts0_.title as title4_1_0_ 
+    from
+        posts posts0_ 
+    where
+        posts0_.id=? 
+        and (
+            posts0_.deleted = false
+        )
+2022-02-14 01:39:25.069 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [14]
+```
 
-그 경우는 왜 발생하냐? 프록시 엔티티로 연관관계 매핑하거나 매핑하기전 엔티티를 조회할 때는 삭제가 안되어있었는데 동시성 문제로 삭제되는 경우
+TODO
+
+TODO 그 경우는 왜 발생하냐? 프록시 엔티티로 연관관계 매핑하거나 매핑하기전 엔티티를 조회할 때는 삭제가 안되어있었는데 동시성 문제로 삭제되는 경우
 
 ### 해결방안
 #### @NotFound With Eager Fetch Join
@@ -580,3 +718,5 @@ void ManyToOne연관관계_엔티티_조인쿼리와_지연로딩으로_발생�
 
 TODO 반드시 Soft Delete를 사용하는 것보다는 상황과 필요에 따라 Soft Delete를 사용하는 것이 좋다는 내용.
 TODO 그리고 단순히 삭제 구분 값 하나를 추가한 것만으로는 Soft Delete를 구현했다고는 볼 수 없으며 고려해야할 점들이 많다는 내용.
+
+[예제 소스 코드](https://github.com/sinbom/implement-soft-delete-hibernate)

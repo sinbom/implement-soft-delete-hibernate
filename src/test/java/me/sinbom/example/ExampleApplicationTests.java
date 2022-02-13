@@ -91,7 +91,7 @@ class ExampleApplicationTests {
     }
 
     @Test
-    void ManyToOne연관관계_엔티티_조인쿼리와_지연로딩으로_발생하는_쿼리가_다르다() {
+    void 삭제처리된_부모엔티티를_패치조인으로_조회하면_삭제된_데이터가_정상조회되어_데이터_일관성_불일치가_발생한다() {
         // given
         Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
         Comments comment = new Comments("우와아~ 집에 갑시다.", post);
@@ -99,22 +99,36 @@ class ExampleApplicationTests {
         // when
         entityManager.persist(post);
         entityManager.persist(comment);
-        entityManager.flush();
         post.delete();
         entityManager.flush();
-
-        // then
+        entityManager.clear();
         List<Comments> result = entityManager
                 .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
                 .getResultList();
+
+        // then
         assertEquals(result.size(), 1);
+        assertTrue(result.get(0).getPost().isDeleted());
+    }
+
+    @Test
+    void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이터_일관성_불일치로인해_에러가_발생한다() {
+        // given
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+        Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+
+        // when
+        entityManager.persist(post);
+        entityManager.persist(comment);
+        post.delete();
+        entityManager.flush();
+        entityManager.clear();
+        Comments comments = entityManager.find(Comments.class, comment.getId());
+
+        // then
         assertThrows(
                 EntityNotFoundException.class,
-                () -> {
-                    entityManager.clear();
-                    Comments comments = entityManager.find(Comments.class, comment.getId());
-                    comments.getPost().getContent(); // lazy loading
-                }
+                () -> comments.getPost().getContent() // lazy loading & exception occurs
         );
     }
 
