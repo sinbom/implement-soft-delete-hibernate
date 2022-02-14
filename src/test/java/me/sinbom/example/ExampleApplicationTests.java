@@ -2,17 +2,22 @@ package me.sinbom.example;
 
 import me.sinbom.example.entity.Comments;
 import me.sinbom.example.entity.Posts;
+import me.sinbom.example.repository.CommentsRepository;
+import me.sinbom.example.repository.PostsRepository;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.persistence.EntityManager;
 import javax.persistence.EntityNotFoundException;
 import javax.persistence.PersistenceException;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -23,6 +28,12 @@ class ExampleApplicationTests {
 
     @Autowired
     private EntityManager entityManager;
+
+    @Autowired
+    private PostsRepository postsRepository;
+
+    @Autowired
+    private CommentsRepository commentsRepository;
 
     @Test
     void SoftDelete를_사용한다() {
@@ -123,13 +134,42 @@ class ExampleApplicationTests {
         post.delete();
         entityManager.flush();
         entityManager.clear();
-        Comments comments = entityManager.find(Comments.class, comment.getId());
+        Comments find = entityManager.find(Comments.class, comment.getId());
 
         // then
         assertThrows(
                 EntityNotFoundException.class,
-                () -> comments.getPost().getContent() // lazy loading & exception occurs
+                () -> find.getPost().getContent() // lazy loading & exception occurs
         );
+    }
+
+    @Test
+    void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불일치가_발생한다() {
+        // given
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+        // when
+        entityManager.persist(post);
+        post.delete();
+        entityManager.flush();
+        Posts deletedPost = entityManager.getReference(Posts.class, post.getId());
+        Comments comment = new Comments("우와아~ 집에 갑시다.", deletedPost);
+        entityManager.persist(comment);
+        entityManager.clear();
+        Comments find = entityManager.find(Comments.class, comment.getId());
+
+        // then
+        assertThrows(
+                EntityNotFoundException.class,
+                () -> find.getPost().getContent() // lazy loading & exception occurs
+        );
+    }
+
+    @Test
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() throws Exception {
+        // given
+        // when
+        // then
     }
 
 }

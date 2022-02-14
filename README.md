@@ -534,8 +534,9 @@ post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title �
 ### 발생할 수 있는 문제점
 
 @Where 애노테이션이 적용된 엔티티의 연관관계가 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않습니다.
+자식 엔티티에 외래키를 설정하려면 부모 엔티티를 매핑해야하는데 그 과정에서 발생한 조회 쿼리에서 삭제 처리된 데이터를 필터링했다고 간주하기 때문입니다.
 하지만 lazy loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다. 만약 부모 엔티티로 참조하고 있는 데이터가 삭제 처리된 데이터일 경우
-문제가 발생할 수 있습니다.
+객체와 데이터베이스 상태의 일관성이 깨지는 문제가 발생할 수 있습니다.
 
 ```java
 @Test
@@ -615,7 +616,8 @@ void 삭제처리된_부모엔티티를_패치조인으로_조회하면_삭제�
         )
 ```
 
-TODO
+부모 엔티티가 삭제되었음에도 불구하고 자식 엔티티를 패치 조인으로 할 때 발생하는 쿼리의 on절에 조건이 포함되지 않아
+삭제 처리된 부모 엔티티가 함께 조회됩니다.
 
 ```java
 @Test
@@ -630,12 +632,12 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
     post.delete();
     entityManager.flush();
     entityManager.clear();
-    Comments comments = entityManager.find(Comments.class, comment.getId());
+    Comments find = entityManager.find(Comments.class, comment.getId());
 
     // then
     assertThrows(
         EntityNotFoundException.class,
-        () -> comments.getPost().getContent() // lazy loading & exception occurs
+        () -> find.getPost().getContent() // lazy loading & exception occurs
     );
 }
 ```
@@ -704,9 +706,45 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
 2022-02-14 01:39:25.069 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [14]
 ```
 
-TODO
+자식 엔티티를 조회한 후에 삭제 처리된 부모 엔티티를 lazy loading을 통해 조회할 때 발생하는 쿼리의 where절에는 조건이 포함됩니다.
+하지만 외래키가 존재함에도 조회된 결과가 없는 데이터 일관성 불일치로 인해 EntityNotFound 예외가 발생합니다.
 
-TODO 그 경우는 왜 발생하냐? 프록시 엔티티로 연관관계 매핑하거나 매핑하기전 엔티티를 조회할 때는 삭제가 안되어있었는데 동시성 문제로 삭제되는 경우
+그렇다면 어떤 경우에 삭제 처리된 부모 엔티티를 참조하게 되는 것일까요?
+
+1. 삭제 처리된 엔티티를 조회하지 않고 프록시로 매핑하는 경우
+
+```java
+@Test
+void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불일치가_발생한다() {
+    // given
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+    // when
+    entityManager.persist(post);
+    post.delete();
+    entityManager.flush();
+    Posts deletedPost = entityManager.getReference(Posts.class, post.getId());
+    Comments comment = new Comments("우와아~ 집에 갑시다.", deletedPost);
+    entityManager.persist(comment);
+    entityManager.clear();
+    Comments find = entityManager.find(Comments.class, comment.getId());
+
+    // then
+    assertThrows(
+        EntityNotFoundException.class,
+        () -> find.getPost().getContent() // lazy loading & exception occurs
+    );
+}
+```
+
+해당 식별키를 가지는 부모 엔티티를 조회하지 않고 프록시 객체로 연관관계를 매핑하는 경우 이미 삭제 처리된
+데이터일지라도 foreign key constraint를 위반하지 않기 때문에 자식 엔티티를 insert할 때 정상적으로 외래키가 설정됩니다. 
+
+2. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우 
+
+```java
+
+```
 
 ### 해결방안
 #### @NotFound With Eager Fetch Join
