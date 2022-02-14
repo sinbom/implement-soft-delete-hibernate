@@ -707,7 +707,7 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
 ```
 
 자식 엔티티를 조회한 후에 삭제 처리된 부모 엔티티를 lazy loading을 통해 조회할 때 발생하는 쿼리의 where절에는 조건이 포함됩니다.
-하지만 외래키가 존재함에도 조회된 결과가 없는 데이터 일관성 불일치로 인해 EntityNotFound 예외가 발생합니다.
+하지만 외래키가 존재함에도 조회된 결과가 없는 데이터 일관성 불일치로 인해 EntityNotFoundException 예외가 발생합니다.
 
 그렇다면 어떤 경우에 삭제 처리된 부모 엔티티를 참조하게 되는 것일까요?
 
@@ -761,7 +761,7 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하�
     // when
     Runnable deletePost = () -> {
         EntityManager em = entityManagerFactory.createEntityManager();
-        em.getTransaction().begin();
+        em.getTransaction().begin(); // tx1
     
         Posts find = em.find(Posts.class, post.getId());
         find.delete();
@@ -778,7 +778,7 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하�
 
     Callable<Long> insertComment = () -> {
         EntityManager em = entityManagerFactory.createEntityManager();
-        em.getTransaction().begin();
+        em.getTransaction().begin(); // tx2
 
         Posts find = em.find(Posts.class, post.getId());
         Comments comment = new Comments("우와아~ 집에 갑시다.", find);
