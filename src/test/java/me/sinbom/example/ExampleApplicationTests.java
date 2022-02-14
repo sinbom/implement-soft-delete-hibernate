@@ -2,22 +2,22 @@ package me.sinbom.example;
 
 import me.sinbom.example.entity.Comments;
 import me.sinbom.example.entity.Posts;
-import me.sinbom.example.repository.CommentsRepository;
-import me.sinbom.example.repository.PostsRepository;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
 import javax.persistence.EntityNotFoundException;
 import javax.persistence.PersistenceException;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -30,10 +30,9 @@ class ExampleApplicationTests {
     private EntityManager entityManager;
 
     @Autowired
-    private PostsRepository postsRepository;
+    private EntityManagerFactory entityManagerFactory;
 
-    @Autowired
-    private CommentsRepository commentsRepository;
+    ExecutorService executorService = Executors.newFixedThreadPool(2);
 
     @Test
     void SoftDelete를_사용한다() {
@@ -168,8 +167,65 @@ class ExampleApplicationTests {
     @Test
     void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() throws Exception {
         // given
+        CountDownLatch awaitForFindPost = new CountDownLatch(1);
+        CountDownLatch awaitForAllCommit = new CountDownLatch(2);
+
+        EntityManager entityManager = entityManagerFactory.createEntityManager();
+        entityManager.getTransaction().begin();
+
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+        entityManager.persist(post);
+
+        entityManager.getTransaction().commit();
+        entityManager.clear();
+
         // when
+        Runnable deletePost = () -> {
+            EntityManager em = entityManagerFactory.createEntityManager();
+            em.getTransaction().begin();
+
+            Posts find = em.find(Posts.class, post.getId());
+            find.delete();
+
+            try {
+                awaitForFindPost.await();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+
+            em.getTransaction().commit();
+            awaitForAllCommit.countDown();
+        };
+
+        Callable<Long> insertComment = () -> {
+            EntityManager em = entityManagerFactory.createEntityManager();
+            em.getTransaction().begin();
+
+            Posts find = em.find(Posts.class, post.getId());
+            Comments comment = new Comments("우와아~ 집에 갑시다.", find);
+            awaitForFindPost.countDown();
+
+            em.persist(comment);
+            em.getTransaction().commit();
+            awaitForAllCommit.countDown();
+
+            return comment.getId();
+        };
+
+        executorService.execute(deletePost);
+        Long id = executorService
+                .submit(insertComment)
+                .get();
+
+        awaitForAllCommit.await();
+
+        Comments comment = entityManager.find(Comments.class, id);
+
         // then
+        assertThrows(
+                EntityNotFoundException.class,
+                () -> comment.getPost().getContent() // lazy loading & exception occurs
+        );
     }
 
 }

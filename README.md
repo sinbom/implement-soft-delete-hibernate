@@ -743,13 +743,77 @@ void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불�
 2. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우 
 
 ```java
+@Test
+void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() throws Exception {
+    // given
+    CountDownLatch awaitForFindPost = new CountDownLatch(1);
+    CountDownLatch awaitForAllCommit = new CountDownLatch(2);
 
+    EntityManager entityManager = entityManagerFactory.createEntityManager();
+    entityManager.getTransaction().begin();
+
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+    entityManager.persist(post);
+
+    entityManager.getTransaction().commit();
+    entityManager.clear();
+
+    // when
+    Runnable deletePost = () -> {
+        EntityManager em = entityManagerFactory.createEntityManager();
+        em.getTransaction().begin();
+    
+        Posts find = em.find(Posts.class, post.getId());
+        find.delete();
+    
+        try {
+            awaitForFindPost.await();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        em.getTransaction().commit();
+        awaitForAllCommit.countDown();
+    };
+
+    Callable<Long> insertComment = () -> {
+        EntityManager em = entityManagerFactory.createEntityManager();
+        em.getTransaction().begin();
+
+        Posts find = em.find(Posts.class, post.getId());
+        Comments comment = new Comments("우와아~ 집에 갑시다.", find);
+        awaitForFindPost.countDown();
+
+        em.persist(comment);
+        em.getTransaction().commit();
+        awaitForAllCommit.countDown();
+
+        return comment.getId();
+    };
+
+    executorService.execute(deletePost);
+    Long id = executorService
+            .submit(insertComment)
+            .get();
+
+    awaitForAllCommit.await();
+
+    Comments comment = entityManager.find(Comments.class, id);
+
+    // then
+    assertThrows(
+        EntityNotFoundException.class,
+        () -> comment.getPost().getContent() // lazy loading & exception occurs
+    );
+}
 ```
+
+TODO
 
 ### 해결방안
 #### @NotFound With Eager Fetch Join
 #### Optimistic Locking
-#### Pessmistic Locking
+#### Pessimistic Locking
 #### Etc synchronous, distribute locking(Redis)
 
 ## 마무리
