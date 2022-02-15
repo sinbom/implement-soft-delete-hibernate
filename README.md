@@ -535,7 +535,7 @@ post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title �
 
 ### 발생할 수 있는 문제점
 
-@Where 애노테이션이 적용된 엔티티의 연관관계가 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않습니다.
+@Where 애노테이션이 적용된 엔티티의 연관관계가 @OneToOne 또는 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않습니다.
 자식 엔티티에 외래키를 설정하려면 부모 엔티티를 매핑해야하는데 그 과정에서 발생한 조회 쿼리에서 삭제 처리된 데이터를 필터링했다고 간주하기 때문입니다.
 하지만 lazy loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다. 만약 부모 엔티티로 참조하고 있는 데이터가 삭제 처리된 데이터일 경우
 객체와 데이터베이스 상태의 일관성이 깨지는 문제가 발생할 수 있습니다.
@@ -863,7 +863,9 @@ COMMIT;
 
 
 ### 해결방안
-#### @NotFound With Eager Fetch Join
+
+delete 쿼리가 아니기 때문에 foreign key constraint를 통한 검증이 불가능하므로 다른 방법을 사용해야한다.
+
 #### Optimistic Locking
 #### Pessimistic Locking
 #### Etc synchronous, distribute locking(Redis)
