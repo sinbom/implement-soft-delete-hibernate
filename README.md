@@ -367,7 +367,7 @@ void SoftDelete에서_CascadeRemove를_사용한다() {
 
     // then
     List<Posts> result = entityManager
-            .createQuery("SELECT p FROM Posts p LEFT JOIN FETCH p.comments", Posts.class)
+            .createQuery("SELECT p FROM Posts p LEFT JOIN FETCH p.comments c", Posts.class)
             .getResultList();
     assertTrue(result.isEmpty());
 }

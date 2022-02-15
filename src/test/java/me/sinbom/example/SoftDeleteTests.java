@@ -3,6 +3,7 @@ package me.sinbom.example;
 import me.sinbom.example.entity.Comments;
 import me.sinbom.example.entity.Posts;
 import org.hibernate.exception.ConstraintViolationException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @Transactional
 @ActiveProfiles(value = "test")
 @SpringBootTest
-class ExampleApplicationTests {
+class SoftDeleteTests {
 
     @Autowired
     private EntityManager entityManager;
@@ -33,6 +34,16 @@ class ExampleApplicationTests {
     private EntityManagerFactory entityManagerFactory;
 
     ExecutorService executorService = Executors.newFixedThreadPool(2);
+
+    @BeforeEach
+    void init() {
+        entityManager
+                .createQuery("DELETE FROM Comments")
+                .executeUpdate();
+        entityManager
+                .createQuery("DELETE FROM Posts")
+                .executeUpdate();
+    }
 
     @Test
     void SoftDelete를_사용한다() {
@@ -73,7 +84,7 @@ class ExampleApplicationTests {
 
         // then
         List<Posts> result = entityManager
-                .createQuery("SELECT p FROM Posts p LEFT JOIN FETCH p.comments", Posts.class)
+                .createQuery("SELECT p FROM Posts p LEFT JOIN FETCH p.comments c", Posts.class)
                 .getResultList();
         assertTrue(result.isEmpty());
     }
