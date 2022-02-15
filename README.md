@@ -26,6 +26,8 @@ Soft Delete와 Hard Delete를 사용했을 때 여러가지 관점에서 비교�
 
 TODO 더 설명할 필요가 있는 내용 추가
 
+TODO 데이터 삭제 후 테이블 및 인덱스(리빌드) 용량 줄어드는거 검증
+
 ```postgresql
 EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted = false; -- (1)
 
@@ -738,7 +740,7 @@ void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불�
 ```
 
 해당 식별키를 가지는 부모 엔티티를 조회하지 않고 프록시 객체로 연관관계를 매핑하는 경우 이미 삭제 처리된
-데이터일지라도 foreign key constraint를 위반하지 않기 때문에 자식 엔티티를 insert할 때 정상적으로 외래키가 설정됩니다. 
+데이터일지라도 foreign key constraint를 위반하지 않기 때문에 삭제 처리된 데이터를 외래키로 참조하게 됩니다. 
 
 2. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우 
 
@@ -808,7 +810,57 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하�
 }
 ```
 
-TODO
+```postgresql
+BEGIN; -- tx1
+    select
+        posts0_.id as id1_1_0_,
+        posts0_.content as content2_1_0_,
+        posts0_.deleted as deleted3_1_0_,
+        posts0_.title as title4_1_0_
+    from
+        posts posts0_
+    where
+        posts0_.id= 1
+      and (
+        posts0_.deleted = false
+        );
+    
+                                    BEGIN; -- tx2
+                                        select
+                                            posts0_.id as id1_1_0_,
+                                            posts0_.content as content2_1_0_,
+                                            posts0_.deleted as deleted3_1_0_,
+                                            posts0_.title as title4_1_0_
+                                        from
+                                            posts posts0_
+                                        where
+                                            posts0_.id= 1
+                                          and (
+                                            posts0_.deleted = false
+                                            );
+                                        
+                                        insert
+                                        into
+                                            comments
+                                            (content, deleted, post_id)
+                                        values
+                                            ('우와아~ 집에 갑시다.', false, 1);
+                                    COMMIT;
+    
+    update
+        posts
+    set
+        content= '오늘은 다들 일하지 말고 집에 가세요!',
+        deleted= true,
+        title= '[FAAI] 공지사항'
+    where
+        id= 1;
+COMMIT;
+```
+
+부모 엔티티를 삭제하는 트랜잭션이 커밋되기 전에 엔티티를 조회 후 매핑하는 경우 자식 엔티티를 insert한 후에 삭제 처리됩니다.
+마찬가지로 foreign key constraint를 위반하지 않기 때문에 삭제 처리된 데이터를 외래키로 참조하게됩니다.
+
 
 ### 해결방안
 #### @NotFound With Eager Fetch Join
