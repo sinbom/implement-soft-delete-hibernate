@@ -12,6 +12,7 @@ import java.util.List;
 
 @Entity
 @Where(clause = "deleted = false")
+//@SQLDelete(sql = "UPDATE posts SET deleted = true, version = version + 1 WHERE id = ? AND version = ?")
 @SQLDelete(sql = "UPDATE posts SET deleted = true WHERE id = ?")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -29,6 +30,9 @@ public class Posts {
 
     @Column(nullable = false)
     private boolean deleted;
+
+//    @Version
+//    private long version;
 
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "post", cascade = CascadeType.REMOVE)
     private List<Comments> comments = new ArrayList<>();

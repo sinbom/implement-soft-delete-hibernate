@@ -29,59 +29,138 @@ TODO 더 설명할 필요가 있는 내용 추가
 TODO 데이터 삭제 후 테이블 및 인덱스(리빌드) 용량 줄어드는거 검증
 
 ```postgresql
-EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted = false; -- (1)
+CREATE TABLE foo
+(
+	deleted BOOLEAN NOT NULL,
+	name varchar(255) NOT  NULL
+);
 
-EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted = true; -- (2)
+CREATE INDEX FOO_NAME_INDEX ON foo(name);
 
-EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted != false; -- (3)
+do $$
+    begin
+        for i in 1..100000 loop
+                INSERT INTO foo (name, deleted) VALUES (CONCAT('bar ', i), false);
+            end loop;
+    end;
+$$;
 
-EXPLAIN ANALYZE SELECT * FROM posts WHERE title = '' AND deleted IS NOT false; -- (4)
+VACUUM FULL foo;
 
-EXPLAIN ANALYZE SELECT * FROM posts WHERE title = ''; -- (5)
+SELECT
+    pg_size_pretty(pg_total_relation_size('foo')) AS "총 용량",
+    pg_size_pretty(pg_relation_size('foo')) AS "테이블 용량",
+    pg_size_pretty(pg_indexes_size('foo')) AS "인덱스 용량";
+```
+
+```text
+  총 용량  |  테이블 용량   |  인덱스 용량
+---------+-------------+-------------
+ 4368 kB |   4328 kB   | 8192 bytes
+```
+
+TODo 테스트를 위해 데이터를 넣는 내용
+
+```postgresql
+DELETE FROM foo WHERE 1 = 1;
+
+REINDEX INDEX foo_name_index;
+VACUUM FULL foo;
+```
+
+```text
+  총 용량     |  테이블 용량   |  인덱스 용량
+------------+-------------+-------------
+ 8192 bytes |   0 bytes   | 8192 bytes
+```
+
+TODO 실제 삭제
+
+```postgresql
+UPDATE foo SET deleted = true WHERE 1 = 1;
+
+REINDEX INDEX foo_name_index;
+VACUUM FULL foo;
+```
+
+```text
+  총 용량  |  테이블 용량   |  인덱스 용량
+---------+-------------+-------------
+ 7416 kB |   4328 kB   |  3088 kB
+```
+
+TODO 소프트 딜리트 삭제
+
+```postgresql
+CREATE UNIQUE INDEX UK_FOO_NAME_INDEX ON foo(name) WHERE deleted = false;
+
+UPDATE foo SET deleted = true WHERE 1 = 1;
+
+REINDEX INDEX uk_foo_name_index;
+VACUUM FULL foo;
+```
+```text
+  총 용량  |  테이블 용량   |  인덱스 용량
+---------+-------------+-------------
+ 4336 kB |   4328 kB   |  8192 bytes
+```
+
+TODO 내용
+    
+```postgresql
+EXPLAIN ANALYZE SELECT * FROM foo WHERE name = 'bar 99' AND deleted = false; -- (1)
+                                                QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------
+Index Scan using uk_foo_name_index on foo  (cost=0.42..8.44 rows=1 width=18) (actual time=0.303..0.304 rows=0 loops=1)
+  Index Cond: ((name)::text = 'ba 99'::text)
+Planning Time: 1.463 ms
+Execution Time: 0.319 ms
+(4 rows)
+
+EXPLAIN ANALYZE SELECT * FROM foo WHERE name = 'bar 99' AND deleted = true; -- (2)
+                                                QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------
+Seq Scan on foo  (cost=0.00..1887.00 rows=1 width=18) (actual time=11.165..11.166 rows=0 loops=1)
+  Filter: (deleted AND ((name)::text = 'ba 99'::text))
+  Rows Removed by Filter: 100000
+Planning Time: 0.103 ms
+Execution Time: 11.190 ms
+(5 rows)
+
+EXPLAIN ANALYZE SELECT * FROM foo WHERE name = 'bar 99' AND deleted != false; -- (3)
+                                                QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------
+Seq Scan on foo  (cost=0.00..1887.00 rows=1 width=18) (actual time=11.825..11.826 rows=0 loops=1)
+  Filter: (deleted AND ((name)::text = 'ba 99'::text))
+  Rows Removed by Filter: 100000
+Planning Time: 0.075 ms
+Execution Time: 11.851 ms
+(5 rows)
+
+EXPLAIN ANALYZE SELECT * FROM foo WHERE name = 'bar 99' AND deleted IS NOT false; -- (4)
+                                                QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------    
+Seq Scan on foo  (cost=0.00..1887.00 rows=1 width=18) (actual time=11.669..11.671 rows=0 loops=1)
+  Filter: ((deleted IS NOT FALSE) AND ((name)::text = 'ba 99'::text))
+  Rows Removed by Filter: 100000
+Planning Time: 0.072 ms
+Execution Time: 11.694 ms
+(5 rows)
+
+EXPLAIN ANALYZE SELECT * FROM foo WHERE name = 'bar 99'; -- (5)
+                                                QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------
+Seq Scan on foo  (cost=0.00..1887.00 rows=1 width=18) (actual time=12.271..12.272 rows=0 loops=1)
+  Filter: ((name)::text = 'ba 99'::text)
+  Rows Removed by Filter: 100000
+Planning Time: 0.069 ms
+Execution Time: 12.289 ms
+(5 rows)
 ```
 
 optimizer가 sequential scan이 아닌 index scan을 선택할 수 있도록 100000개의 데이터를 insert한 후
-어떤 조회 쿼리가 partial index가 적용될 수 있는지 각 쿼리의 실행계획을 확인해보겠습니다.
-
-```text
-(1)
-Index Scan using uk_posts_title_index on posts  (cost=0.42..8.44 rows=1 width=31) (actual time=0.015..0.015 rows=0 loops=1)
-  Index Cond: ((title)::text = ''::text)
-Planning Time: 0.058 ms
-Execution Time: 0.027 ms
-
-(2)
-Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=13.081..13.083 rows=0 loops=1)
-  Filter: (deleted AND ((title)::text = ''::text))
-  Rows Removed by Filter: 100000
-Planning Time: 12.056 ms
-Execution Time: 13.114 ms
-
-(3)
-Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=11.654..11.654 rows=0 loops=1)
-  Filter: (deleted AND ((title)::text = ''::text))
-  Rows Removed by Filter: 100000
-Planning Time: 0.084 ms
-Execution Time: 11.675 ms
-
-(4)
-Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=11.223..11.223 rows=0 loops=1)
-  Filter: ((deleted IS NOT FALSE) AND ((title)::text = ''::text))
-  Rows Removed by Filter: 100000
-Planning Time: 0.134 ms
-Execution Time: 11.254 ms
-
-(5)
-Seq Scan on posts  (cost=0.00..2074.00 rows=1 width=31) (actual time=11.365..11.366 rows=0 loops=1)
-  Filter: ((title)::text = ''::text)
-  Rows Removed by Filter: 100000
-Planning Time: 3.481 ms
-Execution Time: 11.508 ms
-```
-
-deleted = false 조건을 지정하여 생성한 partial index는 반드시 완전히 동일한 deleted = false 조건이 포함된 쿼리에만 적용됩니다.
-(1)번의 조회 쿼리를 제외한 모든 쿼리의 실행계획은 sequential scan이 선택되었습니다.
-
+어떤 조회 쿼리가 partial index가 적용될 수 있는지 각 쿼리의 실행계획을 확인해본 결과 (1)번의 조회 쿼리를 제외한 모든 쿼리의 실행계획은 sequential scan이 선택되었습니다.
+deleted = false 조건을 지정하여 생성한 partial index는 반드시 완전히 동일한 조건이 포함된 쿼리에만 적용됩니다.
 
 ## JPA + Hibernate 개발 환경에서의 구현
 
@@ -710,6 +789,10 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
 
 자식 엔티티를 조회한 후에 삭제 처리된 부모 엔티티를 lazy loading을 통해 조회할 때 발생하는 쿼리의 where절에는 조건이 포함됩니다.
 하지만 외래키가 존재함에도 조회된 결과가 없는 데이터 일관성 불일치로 인해 EntityNotFoundException 예외가 발생합니다.
+연관관계 엔티티에 @NotFound(action = NotFoundAction.IGNORE)을 적용하여 예외발생을 막을 수 있지만 조회 결과가 없는 경우 프록시 객체가 아닌 null을 주입하기 위해
+패치 타입이 Lazy로 설정되더라도 Eager로 적용되어 즉시 조회 쿼리가 발생하고 삭제된 엔티티에 null이 주입되어 데이터베이스 레벨에서는 외래키가 존재하지만 
+엔티티는 존재하지 않게 되어 nullable = false임에도 값이 존재하지 않는 것처럼 보이게 됩니다. 또한 삭제 처리된 부모 엔티티를 패치 조인할 때 발생하는
+데이터 일관성 불일치 문제를 해결할 수 없기 때문에 근본적인 해결 방법이 될 수 없습니다.
 
 그렇다면 어떤 경우에 삭제 처리된 부모 엔티티를 참조하게 되는 것일까요?
 
@@ -746,61 +829,44 @@ void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불�
 
 ```java
 @Test
-void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() throws Exception {
+void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() {
     // given
-    CountDownLatch awaitForFindPost = new CountDownLatch(1);
-    CountDownLatch awaitForAllCommit = new CountDownLatch(2);
-
-    EntityManager entityManager = entityManagerFactory.createEntityManager();
-    entityManager.getTransaction().begin();
-
+    EntityManager em = entityManagerFactory.createEntityManager();
     Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
-    entityManager.persist(post);
 
-    entityManager.getTransaction().commit();
-    entityManager.clear();
+    em.getTransaction().begin();
+    em.persist(post);
+    em.getTransaction().commit();
 
     // when
-    Runnable deletePost = () -> {
-        EntityManager em = entityManagerFactory.createEntityManager();
-        em.getTransaction().begin(); // tx1
-    
-        Posts find = em.find(Posts.class, post.getId());
-        find.delete();
-    
-        try {
-            awaitForFindPost.await();
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+    // tx1 start
+    EntityManager em1 = entityManagerFactory.createEntityManager();
+    EntityTransaction tx1 = em1.getTransaction();
+    tx1.begin();
 
-        em.getTransaction().commit();
-        awaitForAllCommit.countDown();
-    };
+    Posts postTx1 = em1.find(Posts.class, post.getId());
 
-    Callable<Long> insertComment = () -> {
-        EntityManager em = entityManagerFactory.createEntityManager();
-        em.getTransaction().begin(); // tx2
+    if (CollectionUtils.isEmpty(postTx1.getComments())) {
+        postTx1.delete();
+    }
 
-        Posts find = em.find(Posts.class, post.getId());
-        Comments comment = new Comments("우와아~ 집에 갑시다.", find);
-        awaitForFindPost.countDown();
+    // tx2 start
+    EntityManager em2 = entityManagerFactory.createEntityManager();
+    EntityTransaction tx2 = em2.getTransaction();
 
-        em.persist(comment);
-        em.getTransaction().commit();
-        awaitForAllCommit.countDown();
+    tx2.begin();
 
-        return comment.getId();
-    };
+    Posts postTx2 = em2.find(Posts.class, post.getId());
+    Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
 
-    executorService.execute(deletePost);
-    Long id = executorService
-            .submit(insertComment)
-            .get();
+    em2.persist(commentTx2);
+    tx2.commit();
+    // tx2 end
 
-    awaitForAllCommit.await();
+    tx1.commit();
+    // tx1 end
 
-    Comments comment = entityManager.find(Comments.class, id);
+    Comments comment = this.entityManager.find(Comments.class, commentTx2.getId());
 
     // then
     assertThrows(
@@ -823,7 +889,22 @@ BEGIN; -- tx1
         posts0_.id= 1
       and (
         posts0_.deleted = false
-        );
+        )
+
+    select
+        comments0_.post_id as post_id4_0_1_,
+        comments0_.id as id1_0_1_,
+        comments0_.id as id1_0_0_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_
+    from
+        comments comments0_
+    where
+        (
+            comments0_.deleted = false
+            )
+      and comments0_.post_id= 1
     
                                     BEGIN; -- tx2
                                         select
@@ -864,9 +945,33 @@ COMMIT;
 
 ### 해결방안
 
-delete 쿼리가 아니기 때문에 foreign key constraint를 통한 검증이 불가능하므로 다른 방법을 사용해야한다.
+```java
+Posts post = entityManager.getReference(Posts.class, id));
+Comments comment = new Comments("우와아~ 집에 갑시다.", post); // X
+```
+Hard Delete를 사용하는 경우 foreign key 제약조건에 의해 EntityNotFoundException 예외가 발생하지 않습니다. Soft Delete에서는
+delete 쿼리로 인한 물리적인 데이터 삭제가 이루어지지 않기 때문에 삭제 처리되더라도 foreign key constraint를 위반하지 않기 때문에
+외래키로 설정될 수 있게 되면서 해당 문제가 발생할 수 있는 것입니다. 그러므로 반드시 프록시 객체를 주입하여 외래키를 설정해서는 안됩니다. 
+또한 현재 트랜잭션에서 삭제 처리중인 데이터를 다른 트랜잭션에서 조회하여 외래키로 설정할 수 없도록 방지해야합니다.
 
 #### Optimistic Locking
+
+```java
+@Version
+private long version;
+```
+
+낙관적 락을 사용하기 위해 엔티티 클래스에 version 필드를 추가합니다. 엔티티를 대상으로 update 쿼리가 발생하는 경우
+version을 증가시키고 조회 시점의 version과 다른 경우 OptimisticLockException 예외를 발생합니다.
+
+```java
+@SQLDelete(sql = "UPDATE posts SET deleted = true, version = version + 1 WHERE id = ? AND version = ?")
+```
+
+@SQLDelete 애노테이션을 사용하는 경우 쿼리의 조건절에 version 컬럼을 추가하고 version을 증가시킵니다.
+
+TODO 버전 충돌 내용
+
 #### Pessimistic Locking
 #### Etc synchronous, distribute locking(Redis)
 

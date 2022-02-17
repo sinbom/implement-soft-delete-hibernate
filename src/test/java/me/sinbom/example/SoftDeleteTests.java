@@ -9,14 +9,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
-import javax.persistence.EntityNotFoundException;
-import javax.persistence.PersistenceException;
+import javax.persistence.*;
 import java.util.List;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -176,7 +174,54 @@ class SoftDeleteTests {
     }
 
     @Test
-    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() throws Exception {
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하여_데이터_일관성_불일치가_발생한다() {
+        // given
+        EntityManager em = entityManagerFactory.createEntityManager();
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+        em.getTransaction().begin();
+        em.persist(post);
+        em.getTransaction().commit();
+
+        // when
+        // tx1 start
+        EntityManager em1 = entityManagerFactory.createEntityManager();
+        EntityTransaction tx1 = em1.getTransaction();
+        tx1.begin();
+
+        Posts postTx1 = em1.find(Posts.class, post.getId());
+
+        if (CollectionUtils.isEmpty(postTx1.getComments())) {
+            postTx1.delete();
+        }
+
+        // tx2 start
+        EntityManager em2 = entityManagerFactory.createEntityManager();
+        EntityTransaction tx2 = em2.getTransaction();
+
+        tx2.begin();
+
+        Posts postTx2 = em2.find(Posts.class, post.getId());
+        Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
+
+        em2.persist(commentTx2);
+        tx2.commit();
+        // tx2 end
+
+        tx1.commit();
+        // tx1 end
+
+        Comments comment = this.entityManager.find(Comments.class, commentTx2.getId());
+
+        // then
+        assertThrows(
+                EntityNotFoundException.class,
+                () -> comment.getPost().getContent() // lazy loading & exception occurs
+        );
+    }
+
+    @Test // TODO
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_낙관적락으로_방지한다() throws Exception {
         // given
         CountDownLatch awaitForFindPost = new CountDownLatch(1);
         CountDownLatch awaitForAllCommit = new CountDownLatch(2);
@@ -208,29 +253,73 @@ class SoftDeleteTests {
             awaitForAllCommit.countDown();
         };
 
-        Callable<Long> insertComment = () -> {
+        Runnable insertComment = () -> {
             EntityManager em = entityManagerFactory.createEntityManager();
             em.getTransaction().begin();
 
-            Posts find = em.find(Posts.class, post.getId());
+            Posts find = em.find(Posts.class, post.getId(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
             Comments comment = new Comments("우와아~ 집에 갑시다.", find);
             awaitForFindPost.countDown();
 
             em.persist(comment);
-            em.getTransaction().commit();
-            awaitForAllCommit.countDown();
-
-            return comment.getId();
+            try {
+                em.getTransaction().commit();
+            } finally {
+                awaitForAllCommit.countDown();
+            }
         };
 
         executorService.execute(deletePost);
-        Long id = executorService
-                .submit(insertComment)
-                .get();
+
+        // then
+        ExecutionException executionException = assertThrows(
+                ExecutionException.class,
+                () -> executorService.submit(insertComment).get()
+        );
+        assertTrue(executionException.getCause().getCause() instanceof OptimisticLockException);
 
         awaitForAllCommit.await();
+    }
 
-        Comments comment = entityManager.find(Comments.class, id);
+    @Test // TODO
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws Exception {
+        // given
+        EntityManager em = entityManagerFactory.createEntityManager();
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+        em.getTransaction().begin();
+        em.persist(post);
+        em.getTransaction().commit();
+
+        // when
+        // tx1 start
+        EntityManager em1 = entityManagerFactory.createEntityManager();
+        EntityTransaction tx1 = em1.getTransaction();
+        tx1.begin();
+
+        Posts postTx1 = em1.find(Posts.class, post.getId());
+
+        if (CollectionUtils.isEmpty(postTx1.getComments())) {
+            postTx1.delete();
+        }
+
+        // tx2 start
+        EntityManager em2 = entityManagerFactory.createEntityManager();
+        EntityTransaction tx2 = em2.getTransaction();
+
+        tx2.begin();
+
+        Posts postTx2 = em2.find(Posts.class, post.getId());
+        Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
+
+        em2.persist(commentTx2);
+        tx2.commit();
+        // tx2 end
+
+        tx1.commit();
+        // tx1 end
+
+        Comments comment = this.entityManager.find(Comments.class, commentTx2.getId());
 
         // then
         assertThrows(

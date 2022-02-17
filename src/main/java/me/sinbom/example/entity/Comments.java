@@ -10,6 +10,7 @@ import javax.persistence.*;
 
 @Entity
 @Where(clause = "deleted = false")
+//@SQLDelete(sql = "UPDATE comments SET deleted = true, version = version + 1 WHERE id = ? AND version = ?")
 @SQLDelete(sql = "UPDATE comments SET deleted = true WHERE id = ?")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -27,6 +28,9 @@ public class Comments {
 
     @Column(nullable = false)
     private boolean deleted;
+
+//    @Version
+//    private long version;
 
     public Comments(String content, Posts post) {
         this.content = content;
