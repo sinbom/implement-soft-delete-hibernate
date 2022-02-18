@@ -2,31 +2,29 @@
 
 ## Soft Delete란?
 
-Soft Delete 또는 Logical Delete는 delete 쿼리를 사용하여 물리적으로 데이터를 삭제하는 것이 아니라
+`Soft Delete` 또는 `Logical Delete`는 delete 쿼리를 사용하여 물리적으로 데이터를 삭제하는 것이 아니라
 update 쿼리를 통해 상태를 변경하여 삭제된 데이터로 구분할 수 있도록 논리적으로 데이터를 삭제하는 것을 의미합니다.
 
 삭제된 데이터로 구분할 수 있는 방법은 다음과 같습니다.
-- delete_flag(boolean, int) 컬럼의 값이 true 또는 1인 경우
-- delete_at(timestamp) 컬럼의 값이 현재 timestamp보다 이전인 경우
+- `delete_flag(boolean, int)` 컬럼의 값이 true 또는 1인 경우
+- `delete_at(timestamp)` 컬럼의 값이 현재 timestamp보다 이전인 경우
 
-Soft Delete는 물리적인 데이터 삭제가 부담되거나 삭제된 데이터들을 보관하여 데이터로써 활용할 필요나 가치가 있는 경우에 사용됩니다.
+`Soft Delete`는 물리적인 데이터 삭제가 부담되거나 삭제된 데이터들을 보관하여 데이터로써 활용할 필요나 가치가 있는 경우에 사용됩니다.
 
 ## Soft Delete & Hard Delete 비교
 
-Soft Delete와 Hard Delete를 사용했을 때 여러가지 관점에서 비교를 해보겠습니다.
+`Soft Delete`와 `Hard Delete`를 여러가지 관점에서 비교해보겠습니다.
 
-| |Soft Delete|Hard Delete|comment|
-|---|-----|-----|-----|
-|삭제|UPDATE table SET delete_flag = true WHERE id = ?|DELETE table FROM WHERE id = ?|Soft Delete는 삭제 구분 값을 수정하여 논리적으로 데이터를 삭제 처리합니다.|
-|조회|SELECT * FROM table WHERE delete_flag = false|SELECT * FROM table|Soft Delete는 삭제 처리된 데이터가 포함되어 존재하기 때문에 모든 조회 쿼리에 delete_flag = false 조건이 필요합니다.|
-|복원|update 쿼리로 삭제 구분 값을 변경하여 복원합니다.|백업 또는 쿼리 로그를 통해 복원합니다.|Hard Delete는 백업과 장애 발생 시점의 간격과 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.|
-|용량|삭제시 테이블 및 인덱스의 용량이 감소하지 않습니다.|삭제시 테이블 및 인덱스의 용량이 감소합니다.|Soft Delete는 데이터가 물리적으로 삭제되지 않기 때문에 지속적으로 테이블 및 인덱스의 용량이 증가합니다.|
-|unique index|삭제 처리된 값을 필터링 할 수 있는 partial index를 사용하여 unique index를 생성합니다. 만약 지원하지 않는 DBMS를 사용하는 경우 삭제된 데이터와 값이 중복되어 unique 제약조건을 위반할 수 있으므로 삭제 구분 컬럼으로 delete_at(timestamp)을 사용하고 index 구성에 포함시킵니다.|중복될 수 없는 값들로 unique index를 구성합니다.|Sofe Delete는 partial index를 사용할 수 없는 경우 삭제 처리된 데이터가 인덱스에 포함됩니다.
-|on delete cascade|삭제 구분 값을 수정하여 삭제 처리하기 때문에 발생하지 않습니다. 애플리케이션에서 쿼리를 발생시켜 참조 테이블을 삭제 처리하거나 데이터베이스의 트리거를 사용해야합니다.|삭제시 설정된 cascade가 발생합니다.|Soft Delete는 삭제 처리시 발생하는 cascade를 직접 구현해야합니다.|
+|                   | Soft Delete                                                   | Hard Delete                       | comment                                                                                          |
+|-------------------|---------------------------------------------------------------|-----------------------------------|--------------------------------------------------------------------------------------------------|
+| 삭제                | UPDATE table SET delete_flag = true WHERE id = ?              | DELETE table FROM WHERE id = ?    | Soft Delete는 삭제 구분 값을 수정하여 논리적으로 데이터를 삭제 처리합니다.                                                  |
+| 조회                | SELECT * FROM table WHERE delete_flag = false                 | SELECT * FROM table               | Soft Delete는 모든 조회 쿼리에 delete_flag = false 조건이 필요합니다.                                            |
+| 복원                | update 쿼리로 삭제 구분 값을 변경하여 복원합니다.                               | 백업 또는 쿼리 로그를 통해 복원합니다.            | Hard Delete는 백업과 장애 발생 시점의 간격과 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.                                      |
+| 디스크 사용량           | 삭제시 테이블의 디스크 사용량이 감소하지 않습니다.                                  | 삭제시 테이블의 디스크 사용량이 감소합니다.          | Soft Delete는 지속적으로 테이블의 디스크 사용량이 증가합니다.                                                          |
+| unique constraint | 삭제 처리된 값을 필터링 할 수 있는 partial index를 사용하여 unique index를 생성합니다. | 중복될 수 없는 값들로 unique index를 구성합니다. | Sofe Delete는 partial index를 사용하거나 지원하지 않는 DBMS는 삭제 구분 컬럼으로 timestamp를 사용하고 index 컬럼에 포함하여 사용합니다. |
+| on delete cascade | 물리적인 삭제가 발생하지 않기 때문에 사용할 수 없습니다.                              | 삭제시 설정된 cascade가 발생합니다.           | Soft Delete는 삭제 처리시 발생하는 cascade를 애플리케이션 레벨에서 또는 데이터베이스 트리거로 직접 구현해야합니다.                         |
 
-TODO 더 설명할 필요가 있는 내용 추가
-
-TODO 데이터 삭제 후 테이블 및 인덱스(리빌드) 용량 줄어드는거 검증
+`Soft Delete` 방식을 사용할 때 큰 단점은 바로 테이블과 인덱스에서 삭제처리된 데이터가 제거되지 않는다는 점입니다. 데이터가 물리적으로 삭제되지 않기 때문에 지속적으로 디스크 사용량이 증가하고 데이터를 조회하기 위해 삭제처리된 데이터까지 함께 조회하기 때문에 조회 성능이 저하될 수 있습니다.
 
 ```postgresql
 CREATE TABLE foo
@@ -56,13 +54,17 @@ SELECT
 ```text
   총 용량  |  테이블 용량   |  인덱스 용량
 ---------+-------------+-------------
- 4368 kB |   4328 kB   | 8192 bytes
+ 7416 kB |   4328 kB   |  3088 kB
 ```
 
-TODo 테스트를 위해 데이터를 넣는 내용
+삭제 구분 컬럼과 이름 필드가 존재하는 테이블을 생성하고 이름 필드에 인덱스를 생성합니다. 100000개의 테스트 데이터를 insert하고
+테이블과 인덱스의 디스크 사용량을 확인하기 위해 VACUUM, REINDEX 명령어를 실행하여 변경 또는 삭제된 데이터들이 차지 하고있는 디스크 공간을 확보 후 용량을 확인합니다.
+
+- VACCUM : 변경 또는 삭제 처리된 데이터들이 차지하고 있는 테이블의 디스크 공간을 확보합니다.
+- REBUILD INDEX : 변경 또는 삭제 처리된 인덱스 트리의 노드들을 제외한 인덱스를 재색인하여 디스크 공간을 확보하고 삭제된 노드들로 인해 증가한 노드의 물리적인 접근 횟수가 감소합니다.
 
 ```postgresql
-DELETE FROM foo WHERE 1 = 1;
+DELETE FROM foo;
 
 REINDEX INDEX foo_name_index;
 VACUUM FULL foo;
@@ -74,10 +76,10 @@ VACUUM FULL foo;
  8192 bytes |   0 bytes   | 8192 bytes
 ```
 
-TODO 실제 삭제
+`Hard Delete` 방식은 물리적으로 데이터를 삭제하여 테이블과 인덱스의 디스크 사용량이 감소하였습니다.
 
 ```postgresql
-UPDATE foo SET deleted = true WHERE 1 = 1;
+UPDATE foo SET deleted = true;
 
 REINDEX INDEX foo_name_index;
 VACUUM FULL foo;
@@ -89,24 +91,28 @@ VACUUM FULL foo;
  7416 kB |   4328 kB   |  3088 kB
 ```
 
-TODO 소프트 딜리트 삭제
+`Sofe Delete` 방식은 논리적으로 데이터를 삭제하여 테이블과 인덱스의 디스크 사용량에 변화가 없기 때문에 지속적으로 사용량이 증가합니다.
 
 ```postgresql
 CREATE UNIQUE INDEX UK_FOO_NAME_INDEX ON foo(name) WHERE deleted = false;
 
-UPDATE foo SET deleted = true WHERE 1 = 1;
+UPDATE foo SET deleted = true;
 
 REINDEX INDEX uk_foo_name_index;
 VACUUM FULL foo;
 ```
+
 ```text
   총 용량  |  테이블 용량   |  인덱스 용량
 ---------+-------------+-------------
  4336 kB |   4328 kB   |  8192 bytes
 ```
 
-TODO 내용
-    
+`partial index`를 사용하면 논리적으로 삭제 처리된 데이터가 인덱스에서 필터링되어 인덱스의 사용량이 감소한다는 것을 확인할 수 있습니다. 
+삭제된 데이터가 인덱스 트리에서 제거되어 논리적인 접근 횟수와 물리적인 접근 횟수가 동일해지므로 일반 index를 사용하는 것보다 조회 쿼리의 성능에 더 좋은 영향을 줄 수 있습니다.
+
+그렇다면 `partial index`는 모든 쿼리에 적용될 수 있을까요?
+
 ```postgresql
 EXPLAIN ANALYZE SELECT * FROM foo WHERE name = 'bar 99' AND deleted = false; -- (1)
                                                 QUERY PLAN
@@ -158,9 +164,11 @@ Execution Time: 12.289 ms
 (5 rows)
 ```
 
-optimizer가 sequential scan이 아닌 index scan을 선택할 수 있도록 100000개의 데이터를 insert한 후
-어떤 조회 쿼리가 partial index가 적용될 수 있는지 각 쿼리의 실행계획을 확인해본 결과 (1)번의 조회 쿼리를 제외한 모든 쿼리의 실행계획은 sequential scan이 선택되었습니다.
-deleted = false 조건을 지정하여 생성한 partial index는 반드시 완전히 동일한 조건이 포함된 쿼리에만 적용됩니다.
+어떤 조회 쿼리가 partial index가 적용될 수 있는지 각 쿼리의 실행계획을 확인해본 결과, 필터링 조건과 완전히 동일한 (1)번의 조회 쿼리를 제외한 모든 쿼리의 실행계획은 sequential scan이 선택되었습니다.
+`partial index`는 반드시 완전히 동일한 조건이 포함된 쿼리에만 적용된다는 것을 알 수 있습니다.
+
+> 테이블의 용량이 매우 작거나 거의 모든 테이블을 조회하는 경우 index를 통해 data block에 접근하는 것보다 sequential scan을 사용하는 것이 더 빠르기 때문에 optimizer가 index scan을 사용하지 않을 수도 있습니다.
+> 
 
 ## JPA + Hibernate 개발 환경에서의 구현
 
@@ -250,9 +258,9 @@ public class Comments {
 ```java
 @Where(clause = "deleted = false")
 ```
-@Where 애노테이션이 지정된 엔티티를 조회할 때 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 삭제 구분 컬럼은 sofe delete에서 
+@Where 애노테이션이 지정된 엔티티를 조회할 때 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 삭제 구분 컬럼은 sofe delete에서
 삭제된 데이터를 제외하기 위해서 반드시 포함되어야하지만 개발자가 실수로 조건절에서 누락할 수 있기 때문에 애노테이션을 통해 글로벌하게 설정하는 것이 좋습니다. 또한 연관관계 엔티티의 패치 타입 전략을 Lazy하게 가져가는 경우
-Lazy Loading으로 발생하는 조회 쿼리의 조건절에도 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 Native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다. 
+Lazy Loading으로 발생하는 조회 쿼리의 조건절에도 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 Native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다.
 
 ```java
 @SQLDelete(sql = "UPDATE comments SET deleted = true WHERE id = ?")
@@ -266,7 +274,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS UK_POSTS_TITLE_INDEX ON posts(title) WHERE del
 ```
 
 unique constraint를 적용해야하는 경우 사용하고 있는 DBMS가 partial index를 지원한다면 삭제된 데이터를 인덱스에서 필터링하여 제거된 데이터를 제외합니다. partial index는 JPA 스펙에 포함되어 있지 않기 때문에
-애노테이션 기반으로 생성할 수 없습니다. 
+애노테이션 기반으로 생성할 수 없습니다.
 
 ```yaml
 spring:
@@ -790,7 +798,7 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
 자식 엔티티를 조회한 후에 삭제 처리된 부모 엔티티를 lazy loading을 통해 조회할 때 발생하는 쿼리의 where절에는 조건이 포함됩니다.
 하지만 외래키가 존재함에도 조회된 결과가 없는 데이터 일관성 불일치로 인해 EntityNotFoundException 예외가 발생합니다.
 연관관계 엔티티에 @NotFound(action = NotFoundAction.IGNORE)을 적용하여 예외발생을 막을 수 있지만 조회 결과가 없는 경우 프록시 객체가 아닌 null을 주입하기 위해
-패치 타입이 Lazy로 설정되더라도 Eager로 적용되어 즉시 조회 쿼리가 발생하고 삭제된 엔티티에 null이 주입되어 데이터베이스 레벨에서는 외래키가 존재하지만 
+패치 타입이 Lazy로 설정되더라도 Eager로 적용되어 즉시 조회 쿼리가 발생하고 삭제된 엔티티에 null이 주입되어 데이터베이스 레벨에서는 외래키가 존재하지만
 엔티티는 존재하지 않게 되어 nullable = false임에도 값이 존재하지 않는 것처럼 보이게 됩니다. 또한 삭제 처리된 부모 엔티티를 패치 조인할 때 발생하는
 데이터 일관성 불일치 문제를 해결할 수 없기 때문에 근본적인 해결 방법이 될 수 없습니다.
 
@@ -823,9 +831,9 @@ void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불�
 ```
 
 해당 식별키를 가지는 부모 엔티티를 조회하지 않고 프록시 객체로 연관관계를 매핑하는 경우 이미 삭제 처리된
-데이터일지라도 foreign key constraint를 위반하지 않기 때문에 삭제 처리된 데이터를 외래키로 참조하게 됩니다. 
+데이터일지라도 foreign key constraint를 위반하지 않기 때문에 삭제 처리된 데이터를 외래키로 참조하게 됩니다.
 
-2. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우 
+2. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우
 
 ```java
 @Test
@@ -951,7 +959,7 @@ Comments comment = new Comments("우와아~ 집에 갑시다.", post); // X
 ```
 Hard Delete를 사용하는 경우 foreign key 제약조건에 의해 EntityNotFoundException 예외가 발생하지 않습니다. Soft Delete에서는
 delete 쿼리로 인한 물리적인 데이터 삭제가 이루어지지 않기 때문에 삭제 처리되더라도 foreign key constraint를 위반하지 않기 때문에
-외래키로 설정될 수 있게 되면서 해당 문제가 발생할 수 있는 것입니다. 그러므로 반드시 프록시 객체를 주입하여 외래키를 설정해서는 안됩니다. 
+외래키로 설정될 수 있게 되면서 해당 문제가 발생할 수 있는 것입니다. 그러므로 반드시 프록시 객체를 주입하여 외래키를 설정해서는 안됩니다.
 또한 현재 트랜잭션에서 삭제 처리중인 데이터를 다른 트랜잭션에서 조회하여 외래키로 설정할 수 없도록 방지해야합니다.
 
 #### Optimistic Locking
