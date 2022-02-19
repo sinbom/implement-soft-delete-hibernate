@@ -263,7 +263,7 @@ class SoftDeleteTests {
     }
 
     @Test
-    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws ExecutionException, InterruptedException {
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws Exception {
         // given
         CountDownLatch countDownLatch = new CountDownLatch(1);
         EntityManager em = entityManagerFactory.createEntityManager();

@@ -1102,7 +1102,7 @@ TODO 버전 충돌 내용
 
 ```java
 @Test
-void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws ExecutionException, InterruptedException {
+void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws Exception {
     // given
     CountDownLatch countDownLatch = new CountDownLatch(1);
     EntityManager em = entityManagerFactory.createEntityManager();
@@ -1247,7 +1247,8 @@ Etc synchronous, distribute locking(Redis)
 TODO 반드시 Soft Delete를 사용하는 것보다는 상황과 필요에 따라 Soft Delete를 사용하는 것이 좋다는 내용.
 TODO 그리고 단순히 삭제 구분 값 하나를 추가한 것만으로는 Soft Delete를 구현했다고는 볼 수 없으며 고려해야할 점들이 많다는 내용.
 
-references
+
+### references
 - https://www.postgresql.org/docs/14/sql-vacuum.html
 - https://www.postgresql.org/docs/14/sql-reindex.html
 - https://www.postgresql.org/docs/14/indexes-partial.html
@@ -1255,7 +1256,7 @@ references
 - https://docs.jboss.org/hibernate/orm/5.4/javadocs/org/hibernate/annotations/SQLDelete.html
 - https://www.objectdb.com/java/jpa/persistence/lock
 
-소스 코드
+### example 
 - https://github.com/sinbom/implement-soft-delete-hibernate
 
 
