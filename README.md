@@ -167,8 +167,9 @@ Execution Time: 12.289 ms
 어떤 조회 쿼리가 partial index가 적용될 수 있는지 각 쿼리의 실행계획을 확인해본 결과, 필터링 조건과 완전히 동일한 (1)번의 조회 쿼리를 제외한 모든 쿼리의 실행계획은 sequential scan이 선택되었습니다.
 `partial index`는 반드시 완전히 동일한 조건이 포함된 쿼리에만 적용된다는 것을 알 수 있습니다.
 
+>ℹ️ NOTE
+>
 > 테이블의 용량이 매우 작거나 거의 모든 테이블을 조회하는 경우 index를 통해 data block에 접근하는 것보다 sequential scan을 사용하는 것이 더 빠르기 때문에 optimizer가 index scan을 사용하지 않을 수도 있습니다.
-> 
 
 ## JPA + Hibernate 개발 환경에서의 구현
 

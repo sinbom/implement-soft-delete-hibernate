@@ -15,7 +15,8 @@ import org.springframework.util.CollectionUtils;
 import javax.persistence.*;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,8 +30,6 @@ class SoftDeleteTests {
 
     @Autowired
     private EntityManagerFactory entityManagerFactory;
-
-    ExecutorService executorService = Executors.newFixedThreadPool(2);
 
     @BeforeEach
     void init() {
