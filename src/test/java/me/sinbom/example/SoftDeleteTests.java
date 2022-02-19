@@ -2,6 +2,7 @@ package me.sinbom.example;
 
 import me.sinbom.example.entity.Comments;
 import me.sinbom.example.entity.Posts;
+import org.hibernate.cfg.AvailableSettings;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,11 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
 import javax.persistence.*;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -211,7 +210,7 @@ class SoftDeleteTests {
         tx1.commit();
         // tx1 end
 
-        Comments comment = this.entityManager.find(Comments.class, commentTx2.getId());
+        Comments comment = entityManager.find(Comments.class, commentTx2.getId());
 
         // then
         assertThrows(
@@ -220,69 +219,8 @@ class SoftDeleteTests {
         );
     }
 
-    @Test // TODO
-    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_낙관적락으로_방지한다() throws Exception {
-        // given
-        CountDownLatch awaitForFindPost = new CountDownLatch(1);
-        CountDownLatch awaitForAllCommit = new CountDownLatch(2);
-
-        EntityManager entityManager = entityManagerFactory.createEntityManager();
-        entityManager.getTransaction().begin();
-
-        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
-        entityManager.persist(post);
-
-        entityManager.getTransaction().commit();
-        entityManager.clear();
-
-        // when
-        Runnable deletePost = () -> {
-            EntityManager em = entityManagerFactory.createEntityManager();
-            em.getTransaction().begin();
-
-            Posts find = em.find(Posts.class, post.getId());
-            find.delete();
-
-            try {
-                awaitForFindPost.await();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-
-            em.getTransaction().commit();
-            awaitForAllCommit.countDown();
-        };
-
-        Runnable insertComment = () -> {
-            EntityManager em = entityManagerFactory.createEntityManager();
-            em.getTransaction().begin();
-
-            Posts find = em.find(Posts.class, post.getId(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
-            Comments comment = new Comments("우와아~ 집에 갑시다.", find);
-            awaitForFindPost.countDown();
-
-            em.persist(comment);
-            try {
-                em.getTransaction().commit();
-            } finally {
-                awaitForAllCommit.countDown();
-            }
-        };
-
-        executorService.execute(deletePost);
-
-        // then
-        ExecutionException executionException = assertThrows(
-                ExecutionException.class,
-                () -> executorService.submit(insertComment).get()
-        );
-        assertTrue(executionException.getCause().getCause() instanceof OptimisticLockException);
-
-        awaitForAllCommit.await();
-    }
-
-    @Test // TODO
-    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws Exception {
+    @Test
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_낙관적락으로_방지한다() {
         // given
         EntityManager em = entityManagerFactory.createEntityManager();
         Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
@@ -309,23 +247,91 @@ class SoftDeleteTests {
 
         tx2.begin();
 
-        Posts postTx2 = em2.find(Posts.class, post.getId());
+        Posts postTx2 = em2.find(Posts.class, post.getId(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
         Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
 
         em2.persist(commentTx2);
         tx2.commit();
         // tx2 end
 
-        tx1.commit();
-        // tx1 end
+        // then
+        RollbackException rollbackException = assertThrows(
+                RollbackException.class,
+                tx1::commit // tx1 end
+        );
+        assertTrue(rollbackException.getCause() instanceof OptimisticLockException);
+    }
 
-        Comments comment = this.entityManager.find(Comments.class, commentTx2.getId());
+    @Test
+    void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws ExecutionException, InterruptedException {
+        // given
+        CountDownLatch countDownLatch = new CountDownLatch(1);
+        EntityManager em = entityManagerFactory.createEntityManager();
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+        em.getTransaction().begin();
+        em.persist(post);
+        em.getTransaction().commit();
+
+        // when
+        CompletableFuture<Void> tx1Result = CompletableFuture.runAsync(() -> {
+            // tx1 start
+            EntityManager em1 = entityManagerFactory.createEntityManager();
+            EntityTransaction tx1 = em1.getTransaction();
+            tx1.begin();
+
+            try {
+                countDownLatch.await();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+
+            Posts postTx1 = em1.find(
+                    Posts.class,
+                    post.getId(),
+                    LockModeType.PESSIMISTIC_READ,
+                    Collections.singletonMap(AvailableSettings.JPA_LOCK_TIMEOUT, 2000L)
+            );
+
+            if (CollectionUtils.isEmpty(postTx1.getComments())) {
+                postTx1.delete();
+            }
+
+            tx1.commit();
+            // tx1 end
+        });
+
+        CompletableFuture<Long> tx2Result = CompletableFuture.supplyAsync(() -> {
+            // tx2 start
+            EntityManager em2 = entityManagerFactory.createEntityManager();
+            EntityTransaction tx2 = em2.getTransaction();
+
+            tx2.begin();
+
+            Posts postTx2 = em2.find(
+                    Posts.class,
+                    post.getId(),
+                    LockModeType.PESSIMISTIC_WRITE,
+                    Collections.singletonMap(AvailableSettings.JPA_LOCK_TIMEOUT, 2000L)
+            );
+            countDownLatch.countDown();
+            Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
+            em2.persist(commentTx2);
+
+            tx2.commit();
+            // tx2 end
+
+            return commentTx2.getId();
+        });
+
+        CompletableFuture
+                .allOf(tx1Result, tx2Result)
+                .join();
+
+        Comments comment = entityManager.find(Comments.class, tx2Result.get());
 
         // then
-        assertThrows(
-                EntityNotFoundException.class,
-                () -> comment.getPost().getContent() // lazy loading & exception occurs
-        );
+        assertFalse(comment.getPost().isDeleted());
     }
 
 }

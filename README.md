@@ -874,7 +874,7 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하�
     tx1.commit();
     // tx1 end
 
-    Comments comment = this.entityManager.find(Comments.class, commentTx2.getId());
+    Comments comment = entityManager.find(Comments.class, commentTx2.getId());
 
     // then
     assertThrows(
@@ -978,14 +978,284 @@ version을 증가시키고 조회 시점의 version과 다른 경우 OptimisticL
 
 @SQLDelete 애노테이션을 사용하는 경우 쿼리의 조건절에 version 컬럼을 추가하고 version을 증가시킵니다.
 
+```java
+@Test
+void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_낙관적락으로_방지한다() {
+    // given
+    EntityManager em = entityManagerFactory.createEntityManager();
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+    em.getTransaction().begin();
+    em.persist(post);
+    em.getTransaction().commit();
+
+    // when
+    // tx1 start
+    EntityManager em1 = entityManagerFactory.createEntityManager();
+    EntityTransaction tx1 = em1.getTransaction();
+    tx1.begin();
+
+    Posts postTx1 = em1.find(Posts.class, post.getId());
+
+    if (CollectionUtils.isEmpty(postTx1.getComments())) {
+        postTx1.delete();
+    }
+
+    // tx2 start
+    EntityManager em2 = entityManagerFactory.createEntityManager();
+    EntityTransaction tx2 = em2.getTransaction();
+
+    tx2.begin();
+
+    Posts postTx2 = em2.find(Posts.class, post.getId(), LockModeType.OPTIMISTIC_FORCE_INCREMENT);
+    Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
+
+    em2.persist(commentTx2);
+    tx2.commit();
+    // tx2 end
+
+    // then
+    RollbackException rollbackException = assertThrows(
+        RollbackException.class,
+        tx1::commit // tx1 end
+    );
+    assertTrue(rollbackException.getCause() instanceof OptimisticLockException);
+}
+```
+
+```postgresql
+BEGIN; -- tx1
+    select
+        posts0_.id as id1_1_0_,
+        posts0_.content as content2_1_0_,
+        posts0_.deleted as deleted3_1_0_,
+        posts0_.title as title4_1_0_
+    from
+        posts posts0_
+    where
+        posts0_.id= 1
+      and (
+        posts0_.deleted = false
+        )
+
+    select
+        comments0_.post_id as post_id4_0_1_,
+        comments0_.id as id1_0_1_,
+        comments0_.id as id1_0_0_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_
+    from
+        comments comments0_
+    where
+        (
+            comments0_.deleted = false
+            )
+      and comments0_.post_id= 1
+    
+                                    BEGIN; -- tx2
+                                        select
+                                            posts0_.id as id1_1_0_,
+                                            posts0_.content as content2_1_0_,
+                                            posts0_.deleted as deleted3_1_0_,
+                                            posts0_.title as title4_1_0_
+                                        from
+                                            posts posts0_
+                                        where
+                                            posts0_.id= 1
+                                          and (
+                                            posts0_.deleted = false
+                                            );
+                                        
+                                        insert
+                                        into
+                                            comments
+                                            (content, deleted, post_id)
+                                        values
+                                            ('우와아~ 집에 갑시다.', false, 1);
+                                            
+                                        update
+                                            posts 
+                                        set
+                                            version= 1
+                                        where
+                                            id= 1
+                                            and version= 0
+                                    COMMIT;
+    
+    update
+        posts
+    set
+        content= '오늘은 다들 일하지 말고 집에 가세요!',
+        deleted= true,
+        title= '[FAAI] 공지사항',
+        version= 1
+    where
+        id= 1
+        and version= 0
+COMMIT;
+```
+
 TODO 버전 충돌 내용
 
 #### Pessimistic Locking
-#### Etc synchronous, distribute locking(Redis)
+
+```java
+@Test
+void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할수_없도록_비관적락으로_방지한다() throws ExecutionException, InterruptedException {
+    // given
+    CountDownLatch countDownLatch = new CountDownLatch(1);
+    EntityManager em = entityManagerFactory.createEntityManager();
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+
+    em.getTransaction().begin();
+    em.persist(post);
+    em.getTransaction().commit();
+
+    // when
+    CompletableFuture<Void> tx1Result = CompletableFuture.runAsync(() -> {
+        // tx1 start
+        EntityManager em1 = entityManagerFactory.createEntityManager();
+        EntityTransaction tx1 = em1.getTransaction();
+        tx1.begin();
+    
+        try {
+            countDownLatch.await();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        Posts postTx1 = em1.find(
+            Posts.class,
+            post.getId(),
+            LockModeType.PESSIMISTIC_READ,
+            Collections.singletonMap(AvailableSettings.JPA_LOCK_TIMEOUT, 2000L)
+        );
+    
+        if (CollectionUtils.isEmpty(postTx1.getComments())) {
+            postTx1.delete();
+        }
+    
+        tx1.commit();
+        // tx1 end
+    });
+
+    CompletableFuture<Long> tx2Result = CompletableFuture.supplyAsync(() -> {
+        // tx2 start
+        EntityManager em2 = entityManagerFactory.createEntityManager();
+        EntityTransaction tx2 = em2.getTransaction();
+
+        tx2.begin();
+
+        Posts postTx2 = em2.find(
+            Posts.class,
+            post.getId(),
+            LockModeType.PESSIMISTIC_WRITE,
+            Collections.singletonMap(AvailableSettings.JPA_LOCK_TIMEOUT, 2000L)
+        );
+        countDownLatch.countDown();
+        Comments commentTx2 = new Comments("우와아~ 집에 갑시다.", postTx2);
+        em2.persist(commentTx2);
+
+        tx2.commit();
+        // tx2 end
+
+        return commentTx2.getId();
+    });
+
+    CompletableFuture
+        .allOf(tx1Result, tx2Result)
+        .join();
+
+    Comments comment = entityManager.find(Comments.class, tx2Result.get());
+
+    // then
+    assertFalse(comment.getPost().isDeleted());
+}
+```
+
+```postgresql
+BEGIN; -- tx1
+    
+                                    BEGIN; -- tx2
+                                        select
+                                            posts0_.id as id1_1_0_,
+                                            posts0_.content as content2_1_0_,
+                                            posts0_.deleted as deleted3_1_0_,
+                                            posts0_.title as title4_1_0_
+                                        from
+                                            posts posts0_
+                                        where
+                                            posts0_.id= 1
+                                          and (
+                                            posts0_.deleted = false
+                                            ) for update
+                                        
+                                        insert
+                                        into
+                                            comments
+                                            (content, deleted, post_id)
+                                        values
+                                            ('우와아~ 집에 갑시다.', false, 1);
+                                            
+                                        update
+                                            posts 
+                                        set
+                                            version= 1
+                                        where
+                                            id= 1
+                                            and version= 0
+                                    COMMIT;
+
+    select
+        posts0_.id as id1_1_0_,
+        posts0_.content as content2_1_0_,
+        posts0_.deleted as deleted3_1_0_,
+        posts0_.title as title4_1_0_
+    from
+        posts posts0_
+    where
+        posts0_.id= 1
+      and (
+        posts0_.deleted = false
+        ) for share
+
+    select
+        comments0_.post_id as post_id4_0_1_,
+        comments0_.id as id1_0_1_,
+        comments0_.id as id1_0_0_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_
+    from
+        comments comments0_
+    where
+        (
+            comments0_.deleted = false
+            )
+      and comments0_.post_id= 1
+COMMIT;
+```
+
+TODO 락 내용
+
+#### 그 외 다른 방법들
+Etc synchronous, distribute locking(Redis)
 
 ## 마무리
 
 TODO 반드시 Soft Delete를 사용하는 것보다는 상황과 필요에 따라 Soft Delete를 사용하는 것이 좋다는 내용.
 TODO 그리고 단순히 삭제 구분 값 하나를 추가한 것만으로는 Soft Delete를 구현했다고는 볼 수 없으며 고려해야할 점들이 많다는 내용.
 
-[예제 소스 코드](https://github.com/sinbom/implement-soft-delete-hibernate)
+references
+- https://www.postgresql.org/docs/14/sql-vacuum.html
+- https://www.postgresql.org/docs/14/sql-reindex.html
+- https://www.postgresql.org/docs/14/indexes-partial.html
+- https://docs.jboss.org/hibernate/orm/5.4/javadocs/org/hibernate/annotations/Where.html
+- https://docs.jboss.org/hibernate/orm/5.4/javadocs/org/hibernate/annotations/SQLDelete.html
+- https://www.objectdb.com/java/jpa/persistence/lock
+
+소스 코드
+- https://github.com/sinbom/implement-soft-delete-hibernate
+
+
