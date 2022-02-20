@@ -108,7 +108,7 @@ class SoftDeleteTests {
     }
 
     @Test
-    void 삭제처리된_부모엔티티를_패치조인으로_조회하면_삭제된_데이터가_정상조회되어_데이터_일관성_불일치가_발생한다() {
+    void 삭제처리된_부모엔티티를_조인으로_조회하면_데이터_일관성_불일치가_발생한다() {
         // given
         Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
         Comments comment = new Comments("우와아~ 집에 갑시다.", post);
@@ -119,13 +119,27 @@ class SoftDeleteTests {
         post.delete();
         entityManager.flush();
         entityManager.clear();
-        List<Comments> result = entityManager
-                .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
+        List<Comments> fetchJoinResult = entityManager
+                .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p ", Comments.class)
+                .getResultList();
+        entityManager.clear();
+        List<Object[]> emptyResult = entityManager
+                .createQuery("SELECT c, p FROM Comments c INNER JOIN c.post p ON p.deleted = false", Object[].class)
+                .getResultList();
+        List<Object[]> leftJoinResult = entityManager
+                .createQuery("SELECT c, p FROM Comments c LEFT JOIN c.post p ON p.deleted = false", Object[].class)
                 .getResultList();
 
         // then
-        assertEquals(result.size(), 1);
-        assertTrue(result.get(0).getPost().isDeleted());
+        assertEquals(fetchJoinResult.size(), 1);
+        assertTrue(fetchJoinResult.get(0).getPost().isDeleted());
+        assertTrue(emptyResult.isEmpty());
+        assertEquals(leftJoinResult.size(), 1);
+        assertThrows(
+                EntityNotFoundException.class,
+                () -> ((Comments) leftJoinResult.get(0)[0]).getPost().getContent() // lazy loading & exception occurs
+        );
+        assertNull(leftJoinResult.get(0)[1]);
     }
 
     @Test
@@ -143,6 +157,26 @@ class SoftDeleteTests {
         Comments find = entityManager.find(Comments.class, comment.getId());
 
         // then
+        assertThrows(
+                EntityNotFoundException.class,
+                () -> find.getPost().getContent() // lazy loading & exception occurs
+        );
+    }
+
+    @Test
+    void 자식엔티티가_참조중인_부모엔티티를_삭제하면_데이터_일관성_불일치가_발생한다() {
+        // given
+        Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+        Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+        entityManager.persist(post);
+        entityManager.persist(comment);
+
+        // when
+        post.delete();
+        entityManager.flush();
+        entityManager.clear();
+        Comments find = entityManager.find(Comments.class, comment.getId());
+
         assertThrows(
                 EntityNotFoundException.class,
                 () -> find.getPost().getContent() // lazy loading & exception occurs

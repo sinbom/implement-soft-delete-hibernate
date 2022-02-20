@@ -173,12 +173,7 @@ Execution Time: 12.289 ms
 
 ## JPA + Hibernate 개발 환경에서의 구현
 
-Spring Boot 기반의 웹 애플리케이션을 Hibernate를 사용해서 개발할 때 soft delete를 구현하는 방법과 주의해야할 점에 대해서 알아보겠습니다.
-
-개발 환경 정보
-- Spring Boot 2.5.10
-- Hibernate 5.4.33
-- Postgresql 14.1
+Hibernate를 사용하는 애플리케이션에서 soft delete를 구현하는 방법과 주의해야할 점에 대해서 알아보겠습니다.
 
 ### 구현
 
@@ -252,30 +247,31 @@ public class Comments {
     public void delete() {
         this.deleted = true;
     }
+    
+}
 ```
 
-예제 소스 코드에서 사용할 게시글과 댓글 엔티티 클래스입니다. soft delete를 구현하기 위해 boolean타입의 deleted 필드로 삭제 유무를 구분하고 delete 메소드를 통해 객체의 상태를 변경하여 삭제합니다.
+예제 소스 코드에서 사용할 게시글과 댓글 엔티티 클래스입니다. soft delete를 구현하기 위해 boolean 타입의 필드로 삭제 유무를 구분하고 메소드를 통해 객체의 상태를 변경하여 삭제합니다.
 
 ```java
 @Where(clause = "deleted = false")
 ```
-@Where 애노테이션이 지정된 엔티티를 조회할 때 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 삭제 구분 컬럼은 sofe delete에서
-삭제된 데이터를 제외하기 위해서 반드시 포함되어야하지만 개발자가 실수로 조건절에서 누락할 수 있기 때문에 애노테이션을 통해 글로벌하게 설정하는 것이 좋습니다. 또한 연관관계 엔티티의 패치 타입 전략을 Lazy하게 가져가는 경우
-Lazy Loading으로 발생하는 조회 쿼리의 조건절에도 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 Native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다.
+
+엔티티 조회 쿼리의 where절에 반드시 포함되는 조건을 설정할 수 있습니다. 개발자의 실수로 쉽게 누락할 수 있기 때문에 애노테이션을 사용해서 글로벌하게 설정하는 것이 좋습니다.
+또한 Lazy Loading으로 발생하는 조회 쿼리의 where절에 조건을 포함시키기 위해서는 반드시 사용해야합니다. 하지만 JPQL 또는 HQL이 아닌 native SQL을 사용할 때는 적용되지 않기 때문에 주의해야합니다.
 
 ```java
 @SQLDelete(sql = "UPDATE comments SET deleted = true WHERE id = ?")
 ```
 
-@SQLDelete 애노테이션이 지정된 엔티티의 상태를 removed로 변경할 때 발생하는 쿼리를 설정할 수 있습니다. soft delete는 delete 쿼리가 발생하지 않기 때문에
-on delete cascade를 사용할 수 없지만 @SQLDelete와 cascade 옵션을 함께 사용하면 soft delete에서 cascade를 별도의 데이터베이스 트리거나 소스 코드 없이도 쉽게 구현할 수 있습니다.
+엔티티의 상태를 removed로 변경할 때 발생하는 쿼리를 설정할 수 있습니다. 연관관계 매핑 애노테이션들(@OneToMany, @ManyToOne, @OneToOne)의 cascade = CascadeType.REMOVE 옵션과 함께 사용하면
+별도의 구현 없이 on soft delete cascade를 적용할 수 있습니다.
 
 ```postgresql
 CREATE UNIQUE INDEX IF NOT EXISTS UK_POSTS_TITLE_INDEX ON posts(title) WHERE deleted = false;
 ```
 
-unique constraint를 적용해야하는 경우 사용하고 있는 DBMS가 partial index를 지원한다면 삭제된 데이터를 인덱스에서 필터링하여 제거된 데이터를 제외합니다. partial index는 JPA 스펙에 포함되어 있지 않기 때문에
-애노테이션 기반으로 생성할 수 없습니다.
+삭제된 데이터를 인덱스에서 필터링하여 unique constraint를 적용합니다. `partial index`는 JPA 스펙에 포함되어 있지 않기 때문에 애노테이션 기반으로 생성할 수 없습니다.
 
 ```yaml
 spring:
@@ -292,8 +288,8 @@ logging:
             ScriptUtils: DEBUG
 ```
 
-인덱스 생성 쿼리를 schema.sql 파일에 작성하고 classpath에 위치합니다. spring.sql.init.mode 프로퍼티를 always로 설정하여
-애플리케이션 실행시 sql script로 초기화하도록 설정합니다. 초기화 script 파일에서 발생한 쿼리 로그를 출력혀려면 로깅 레벨 설정이 필요합니다.
+인덱스 생성 쿼리를 `schema.sql` 파일에 작성하고 classpath에 위치합니다. `spring.sql.init.mode`를 `always`로 설정하여 애플리케이션 실행시 초기화 script로 사용하도록 설정합니다. 
+초기화 script에서 발생한 쿼리 로그를 확인하려면 `logging.level.springframework.jdbc.datasource.init.ScriptUtils`를 `DEBUG`로 설정합니다.
 
 ### 테스트
 
@@ -436,7 +432,7 @@ void SoftDelete를_사용한다() {
 2022-02-13 23:27:44.780 TRACE 4209 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [2]
 ```
 
-엔티티 객체의 deleted 필드 값을 true로 변경하여 삭제합니다. select 쿼리에 delete = false 조건이 where절에 포함되어 삭제된 데이터를 제외하는 것을 확인할 수 있습니다.
+삭제 구분 필드의 값을 true로 변경하여 삭제합니다. 조회 쿼리의 where절에 delete = false 조건이 포함되어 삭제된 데이터를 제외하고 조회하는 것을 확인할 수 있습니다.
 
 ```java
 @Test
@@ -542,8 +538,7 @@ void SoftDelete에서_CascadeRemove를_사용한다() {
         )
 ```
 
-엔티티의 상태를 removed로 변경하여 cascade remove 옵션이 적용된 연관관계 엔티티를 대상으로 @SQLDelete 애노테이션에 설정된 쿼리를 발생시켜 모두 삭제합니다.
-조인을 사용하는 select 쿼리에 deleted = false 조건이 where절과 on절에 포함되어 삭제된 데이터를 제외하는 것을 확인할 수 있습니다.
+엔티티의 상태를 removed로 변경하여 자식 엔티티를 cascade 삭제합니다. 조인을 사용한 조회 쿼리의 where절과 on절에 delete = false 조건이 포함되어 삭제된 데이터를 제외하고 조회하는 것을 확인할 수 있습니다.
 
 ```java
 @Test
@@ -618,96 +613,13 @@ void SoftDelete에서_UniqueConstraint를_사용한다() {
   Detail: Key (title)=([FAAI] 공지사항) already exists.
 ```
 
-post가 delete 쿼리를 통해 삭제되지 않아 실제로 동일한 title 컬럼의 데이터가 존재하지만 partial index에서 필터링되어 unique constraint를 위반하지 않습니다.
-반면 post2가 삭제되지 않은 상태에서 post3를 insert하게 되면 constraint 위반 에러가 발생합니다.
+삭제된 데이터는 `partial index`에서 제외되어 unique constraint를 위반하지 않지만 삭제되지 않은 상태에서 동일한 title 컬럼의 값을 입력하면 constraint 위반 에러가 발생합니다.
 
 ### 발생할 수 있는 문제점
 
-@Where 애노테이션이 적용된 엔티티의 연관관계가 @OneToOne 또는 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않습니다.
-자식 엔티티에 외래키를 설정하려면 부모 엔티티를 매핑해야하는데 그 과정에서 발생한 조회 쿼리에서 삭제 처리된 데이터를 필터링했다고 간주하기 때문입니다.
-하지만 lazy loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다. 만약 부모 엔티티로 참조하고 있는 데이터가 삭제 처리된 데이터일 경우
-객체와 데이터베이스 상태의 일관성이 깨지는 문제가 발생할 수 있습니다.
-
-```java
-@Test
-void 삭제처리된_부모엔티티를_패치조인으로_조회하면_삭제된_데이터가_정상조회되어_데이터_일관성_불일치가_발생한다() {
-    // given
-    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
-    Comments comment = new Comments("우와아~ 집에 갑시다.", post);
-
-     // when
-    entityManager.persist(post);
-    entityManager.persist(comment);
-    post.delete();
-    entityManager.flush();
-    entityManager.clear();
-    List<Comments> result = entityManager
-            .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
-            .getResultList();
-
-    // then
-    assertEquals(result.size(), 1);
-    assertTrue(result.get(0).getPost().isDeleted());
-}
-```
-
-```text
-2022-02-14 01:38:58.872 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
-    insert 
-    into
-        posts
-        (content, deleted, title) 
-    values
-        (?, ?, ?)
-2022-02-14 01:38:58.874 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-14 01:38:58.874 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
-2022-02-14 01:38:58.874 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-14 01:38:58.885 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
-    insert 
-    into
-        comments
-        (content, deleted, post_id) 
-    values
-        (?, ?, ?)
-2022-02-14 01:38:58.885 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
-2022-02-14 01:38:58.885 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
-2022-02-14 01:38:58.885 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [13]
-2022-02-14 01:38:58.899 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
-    update
-        posts 
-    set
-        content=?,
-        deleted=?,
-        title=? 
-    where
-        id=?
-2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
-2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
-2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
-2022-02-14 01:38:58.899 TRACE 5595 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [13]
-2022-02-14 01:38:58.946 DEBUG 5595 --- [    Test worker] org.hibernate.SQL                        : 
-    select
-        comments0_.id as id1_0_0_,
-        posts1_.id as id1_1_1_,
-        comments0_.content as content2_0_0_,
-        comments0_.deleted as deleted3_0_0_,
-        comments0_.post_id as post_id4_0_0_,
-        posts1_.content as content2_1_1_,
-        posts1_.deleted as deleted3_1_1_,
-        posts1_.title as title4_1_1_ 
-    from
-        comments comments0_ 
-    inner join
-        posts posts1_ 
-            on comments0_.post_id=posts1_.id 
-    where
-        (
-            comments0_.deleted = false
-        )
-```
-
-부모 엔티티가 삭제되었음에도 불구하고 자식 엔티티를 패치 조인으로 할 때 발생하는 쿼리의 on절에 조건이 포함되지 않아
-삭제 처리된 부모 엔티티가 함께 조회됩니다.
+@Where 애노테이션이 적용된 엔티티와의 연관관계가 @OneToOne 또는 @ManyToOne인 경우 조인을 사용한 조회 쿼리의 on절에 조건이 포함되지 않지만
+Lazy Loading으로 발생하는 조회 쿼리의 where절에는 조건이 포함됩니다. 만약 부모 엔티티로 참조하고 있는 데이터가 삭제 처리된 데이터일 경우
+객체와 데이터베이스 상태의 일관성이 불일치하는 문제가 발생합니다.
 
 ```java
 @Test
@@ -796,14 +708,164 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
 2022-02-14 01:39:25.069 TRACE 5605 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [BIGINT] - [14]
 ```
 
-자식 엔티티를 조회한 후에 삭제 처리된 부모 엔티티를 lazy loading을 통해 조회할 때 발생하는 쿼리의 where절에는 조건이 포함됩니다.
-하지만 외래키가 존재함에도 조회된 결과가 없는 데이터 일관성 불일치로 인해 EntityNotFoundException 예외가 발생합니다.
-연관관계 엔티티에 @NotFound(action = NotFoundAction.IGNORE)을 적용하여 예외발생을 막을 수 있지만 조회 결과가 없는 경우 프록시 객체가 아닌 null을 주입하기 위해
-패치 타입이 Lazy로 설정되더라도 Eager로 적용되어 즉시 조회 쿼리가 발생하고 삭제된 엔티티에 null이 주입되어 데이터베이스 레벨에서는 외래키가 존재하지만
-엔티티는 존재하지 않게 되어 nullable = false임에도 값이 존재하지 않는 것처럼 보이게 됩니다. 또한 삭제 처리된 부모 엔티티를 패치 조인할 때 발생하는
-데이터 일관성 불일치 문제를 해결할 수 없기 때문에 근본적인 해결 방법이 될 수 없습니다.
+삭제된 부모 엔티티를 Lazy Loading할 때 데이터베이스에는 참조 중인 외래키가 존재하지만 조회된 엔티티가 없어 일관성 불일치로 인해 EntityNotFoundException 예외가 발생합니다.
+부모 엔티티 연관관계 매핑에 @NotFound(action = NotFoundAction.IGNORE)을 적용하여 EntityNotFoundException 예외 발생을 막을 수 있지만 조회 결과가 없는 경우 
+프록시 객체가 아닌 null을 주입하기 위해 패치 타입이 Lazy로 설정되어 있어도 무시되어 Eager로 간주되기 때문에 성능 문제가 발생할 수 있고 객체와 데이터베이스 상태의 일관성 불일치를 해결할 수 없습니다.
 
-그렇다면 어떤 경우에 삭제 처리된 부모 엔티티를 참조하게 되는 것일까요?
+```java
+@Test
+void 삭제처리된_부모엔티티를_조인으로_조회하면_데이터_일관성_불일치가_발생한다 {
+    // given
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+    Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+
+    // when
+    entityManager.persist(post);
+    entityManager.persist(comment);
+    post.delete();
+    entityManager.flush();
+    entityManager.clear();
+    List<Comments> fetchJoinResult = entityManager
+            .createQuery("SELECT c FROM Comments c INNER JOIN FETCH c.post p", Comments.class)
+            .getResultList();
+    entityManager.clear();
+    List<Object[]> emptyResult = entityManager
+            .createQuery("SELECT c, p FROM Comments c INNER JOIN c.post p ON p.deleted = false", Object[].class)
+            .getResultList();
+    List<Object[]> leftJoinResult = entityManager
+            .createQuery("SELECT c, p FROM Comments c LEFT JOIN c.post p ON p.deleted = false", Object[].class)
+            .getResultList();
+
+    // then
+    assertEquals(fetchJoinResult.size(), 1);
+    assertTrue(fetchJoinResult.get(0).getPost().isDeleted());
+    assertTrue(emptyResult.isEmpty());
+    assertEquals(leftJoinResult.size(), 1);
+    assertThrows(
+        EntityNotFoundException.class,
+        () -> ((Comments) leftJoinResult.get(0)[0]).getPost().getContent() // lazy loading & exception occurs
+    );
+    assertNull(leftJoinResult.get(0)[1]);
+}
+```
+
+```text
+2022-02-20 16:01:23.320 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        posts
+        (content, deleted, title) 
+    values
+        (?, ?, ?)
+2022-02-20 16:01:23.321 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-20 16:01:23.322 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-20 16:01:23.322 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-20 16:01:23.327 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    insert 
+    into
+        comments
+        (content, deleted, post_id) 
+    values
+        (?, ?, ?)
+2022-02-20 16:01:23.328 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [우와아~ 집에 갑시다.]
+2022-02-20 16:01:23.328 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [false]
+2022-02-20 16:01:23.328 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [BIGINT] - [28]
+2022-02-20 16:01:23.335 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    update
+        posts 
+    set
+        content=?,
+        deleted=?,
+        title=? 
+    where
+        id=?
+2022-02-20 16:01:23.335 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [1] as [VARCHAR] - [오늘은 다들 일하지 말고 집에 가세요!]
+2022-02-20 16:01:23.335 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [2] as [BOOLEAN] - [true]
+2022-02-20 16:01:23.335 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [3] as [VARCHAR] - [[FAAI] 공지사항]
+2022-02-20 16:01:23.335 TRACE 17475 --- [    Test worker] o.h.type.descriptor.sql.BasicBinder      : binding parameter [4] as [BIGINT] - [28]
+2022-02-20 16:01:23.347 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        comments0_.id as id1_0_0_,
+        posts1_.id as id1_1_1_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_,
+        posts1_.content as content2_1_1_,
+        posts1_.deleted as deleted3_1_1_,
+        posts1_.title as title4_1_1_ 
+    from
+        comments comments0_ 
+    inner join
+        posts posts1_ 
+            on comments0_.post_id=posts1_.id 
+    where
+        (
+            comments0_.deleted = false
+        )
+2022-02-20 16:01:23.357 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        comments0_.id as id1_0_0_,
+        posts1_.id as id1_1_1_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_,
+        posts1_.content as content2_1_1_,
+        posts1_.deleted as deleted3_1_1_,
+        posts1_.title as title4_1_1_ 
+    from
+        comments comments0_ 
+    inner join
+        posts posts1_ 
+            on comments0_.post_id=posts1_.id 
+            and (
+                posts1_.deleted=false
+            ) 
+    where
+        (
+            comments0_.deleted = false
+        )
+2022-02-20 16:01:23.362 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        comments0_.id as id1_0_0_,
+        posts1_.id as id1_1_1_,
+        comments0_.content as content2_0_0_,
+        comments0_.deleted as deleted3_0_0_,
+        comments0_.post_id as post_id4_0_0_,
+        posts1_.content as content2_1_1_,
+        posts1_.deleted as deleted3_1_1_,
+        posts1_.title as title4_1_1_ 
+    from
+        comments comments0_ 
+    left outer join
+        posts posts1_ 
+            on comments0_.post_id=posts1_.id 
+            and (
+                posts1_.deleted=false
+            ) 
+    where
+        (
+            comments0_.deleted = false
+        )
+2022-02-20 16:01:23.369 DEBUG 17475 --- [    Test worker] org.hibernate.SQL                        : 
+    select
+        posts0_.id as id1_1_0_,
+        posts0_.content as content2_1_0_,
+        posts0_.deleted as deleted3_1_0_,
+        posts0_.title as title4_1_0_ 
+    from
+        posts posts0_ 
+    where
+        posts0_.id=? 
+        and (
+            posts0_.deleted = false
+        )
+```
+
+Hibernate는 패치 조인 쿼리에 데이터베이스와 엔티티의 일관성 일치를 위해 on절에 직접 조건을 사용하는 경우 QuerySyntaxException 에러가 발생합니다. 
+패치 조인으로 조회하는 경우 삭제된 부모 엔티티가 함께 조회되기 때문에 패치 조인을 사용하지 않고 내부 조인 쿼리의 on절에 조건을 추가하여 조회하면 삭제되지 않은 자식 엔티티까지 조회되지 않게 됩니다. 
+삭제되지 않은 자식 엔티티를 조회하기 위해 외부 조인을 사용하더라도 결국 Lazy Loading으로 인해 동일한 문제가 발생하게 됩니다.
+
+그렇다면 어떤 경우에 삭제된 부모 엔티티를 매핑하게 되는 것일까요?
 
 1. 삭제 처리된 엔티티를 조회하지 않고 프록시로 매핑하는 경우
 
@@ -831,10 +893,35 @@ void 삭제처리된_프록시엔티티를_매핑하면_데이터_일관성_불�
 }
 ```
 
-해당 식별키를 가지는 부모 엔티티를 조회하지 않고 프록시 객체로 연관관계를 매핑하는 경우 이미 삭제 처리된
-데이터일지라도 foreign key constraint를 위반하지 않기 때문에 삭제 처리된 데이터를 외래키로 참조하게 됩니다.
+해당 식별키를 가진 부모 엔티티가 이미 삭제처리 되었더라도 조회하지 않고 프록시 객체로 연관관계를 설정하는 경우 삭제된 부모 엔티티를 매핑하게 될 수 있습니다.
 
-2. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우
+2. 자식 엔티티가 매핑중인 부모 엔티티를 삭제하는 경우
+
+```java
+@Test
+void 자식엔티티가_매핑중인_부모엔티티를_삭제하면_데이터_일관성_불일치가_발생한다() {
+    // given
+    Posts post = new Posts("[FAAI] 공지사항", "오늘은 다들 일하지 말고 집에 가세요!");
+    Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+    entityManager.persist(post);
+    entityManager.persist(comment);
+
+    // when
+    post.delete();
+    entityManager.flush();
+    entityManager.clear();
+    Comments find = entityManager.find(Comments.class, comment.getId());
+
+    assertThrows(
+        EntityNotFoundException.class,
+        () -> find.getPost().getContent() // lazy loading & exception occurs
+    );
+}
+```
+
+자식 엔티티가 매핑중인 부모 엔티티를 삭제가 불가능하게 처리하거나 자식 엔티티를 함께 삭제하는 방식으로 처리하지 않는 경우 삭제된 부모 엔티티를 매핑하게 될 수 있습니다.
+ 
+3. 조회 시점에는 삭제 처리가 되지 않았지만 다른 트랜잭션에 의해 삭제 처리된 경우
 
 ```java
 @Test
@@ -948,8 +1035,7 @@ BEGIN; -- tx1
 COMMIT;
 ```
 
-부모 엔티티를 삭제하는 트랜잭션이 커밋되기 전에 엔티티를 조회 후 매핑하는 경우 자식 엔티티를 insert한 후에 삭제 처리됩니다.
-마찬가지로 foreign key constraint를 위반하지 않기 때문에 삭제 처리된 데이터를 외래키로 참조하게됩니다.
+부모 엔티티를 삭제하는 트랜잭션이 커밋되기 전에 다른 트랜잭션에서 부모 엔티티를 조회 후 연관관계를 매핑하는 경우 삭제된 부모 엔티티를 매핑하게 될 수 있습니다.
 
 
 ### 해결방안
