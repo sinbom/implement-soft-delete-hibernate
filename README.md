@@ -38,8 +38,7 @@ delete 쿼리는 테이블의 레코드와 인덱스의 노드를 삭제 처리�
 ### 디스크 사용량(`soft delete` < `hard delete`)
 `Soft Delete` 를 사용할 때 큰 단점은 바로 테이블과 인덱스에서 삭제된 데이터가 물리적으로 제거되지 않는다는 점입니다.
 사용중인 DBMS의 `partial index` 지원 유무에 따라 인덱스의 사용량은 다를 수 있지만 데이터가 물리적으로 삭제되지 않기 때문에 
-지속적으로 디스크 사용량이 증가하고 데이터를 조회하는 과정에서 삭제된 데이터들이 함께 조회되기 때문에 조회 성능이 저하될 수 있습니다.
-이 부분은 오랜 기간 데이터가 쌓일수록 상당한 성능 저하를 야기할 수 있습니다.
+지속적으로 디스크 사용량이 증가하고 데이터를 조회하는 과정에서 삭제된 데이터들이 함께 조회되기 때문에 데이터가 쌓일수록 조회 성능이 저하될 수 있습니다.
 
 `Hard Delete`와 `Soft Delete`를 사용할 때 테이블과 인덱스의 디스크 사용량을 확인해보겠습니다.  
 
@@ -234,13 +233,69 @@ unique constraint에는 필터링 조건을 설정할 수 없지만 `partial ind
 
 ### On Delete Cascade(`Soft Delete` < `Hard Delete`)
 
-`Soft Delete`는 cascade 삭제를 애플리케이션 또는 데이터베이스 트리거로 직접 구현해야합니다.
+`Soft Delete`는 delete 쿼리를 사용하지 않기 때문에 on delete cascade를 사용할 수 없습니다. `Soft Delete`에서 cascade 삭제를 사용하기 위해서는 
+애플리케이션 또는 데이터베이스 레벨에서 트리거로 직접 구현해야합니다.
 
-TODO
+```postgresql
+CREATE TABLE foo
+(
+    id      BIGINT PRIMARY KEY,
+    deleted BOOLEAN      NOT NULL,
+    name    VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE bar
+(
+    id      BIGINT PRIMARY KEY,
+    deleted BOOLEAN                    NOT NULL,
+    name    VARCHAR(255)               NOT NULL,
+    foo_id  BIGINT REFERENCES foo (id) NOT NULL
+);
+
+INSERT INTO foo(id, deleted, name) VALUES (1, false, '부모');
+INSERT INTO bar(id, deleted, name, foo_id) VALUES (1, false, '자식', 1);
+
+CREATE FUNCTION soft_delete_cascade()
+    RETURNS TRIGGER AS
+$$
+BEGIN
+    UPDATE bar SET deleted = true WHERE id = old.id;
+    return NULL;
+END;
+$$
+    LANGUAGE plpgsql;
+
+CREATE TRIGGER soft_delete_trigger
+    AFTER UPDATE
+    ON foo
+    FOR EACH ROW
+EXECUTE PROCEDURE soft_delete_cascade();
+
+UPDATE foo SET deleted = true WHERE id = 1;
+
+SELECT f.deleted, b.deleted
+FROM foo f INNER JOIN bar b ON f.id = b.foo_id
+WHERE f.id = 1;
+```
+
+```text
+ deleted | deleted
+---------+---------
+ t       | t
+```
+
+데이터의 삭제 구분 값을 변경했을 때 해당 데이터를 참조 중인 테이블 로우의 삭제 구분 값을 함께 변경할 수 있도록 함수를 작성하고 트리거에 설정합니다.
+애플리케이션에서 구현하는 방법은 ORM 프레임워크 사용 유무에 따라 다르기 때문에 Hibernate 환경에서 구현해보면서 함께 살펴보도록 하겠습니다.
+
 
 ## JPA + Hibernate 개발 환경에서의 구현
 
-Hibernate를 사용하는 애플리케이션에서 soft delete를 구현하는 방법과 주의해야할 점에 대해서 알아보겠습니다.
+Hibernate를 사용하는 애플리케이션에서 `Soft Delete`를 구현하는 방법과 발생할 수 있는 문제들을 해결할 수 있는 방법들에 대해서 알아보겠습니다. 
+
+개발 환경
+- Spring Boot 2.5.10
+- Postgresql 14.1
+- Java 11(Open Jdk Azul)
 
 ### 구현
 
