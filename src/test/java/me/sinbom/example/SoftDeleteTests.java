@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.CollectionUtils;
 
 import javax.persistence.*;
 import java.util.Collections;
@@ -223,7 +222,7 @@ class SoftDeleteTests {
 
         Posts postTx1 = em1.find(Posts.class, post.getId());
 
-        if (CollectionUtils.isEmpty(postTx1.getComments())) {
+        if (postTx1.getComments().isEmpty()) {
             postTx1.delete();
         }
 
@@ -270,7 +269,7 @@ class SoftDeleteTests {
 
         Posts postTx1 = em1.find(Posts.class, post.getId());
 
-        if (CollectionUtils.isEmpty(postTx1.getComments())) {
+        if (postTx1.getComments().isEmpty()) {
             postTx1.delete();
         }
 
@@ -326,7 +325,7 @@ class SoftDeleteTests {
                     Collections.singletonMap(AvailableSettings.JPA_LOCK_TIMEOUT, 2000L)
             );
 
-            if (CollectionUtils.isEmpty(postTx1.getComments())) {
+            if (postTx1.getComments().isEmpty()) {
                 postTx1.delete();
             }
 

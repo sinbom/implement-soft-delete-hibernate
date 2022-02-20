@@ -4,7 +4,8 @@
 
 `Soft Delete` 또는 `Logical Delete`는 delete 쿼리를 사용하여 물리적으로 데이터를 삭제하는 것이 아니라
 update 쿼리를 통해 상태를 변경하여 삭제된 데이터로 구분할 수 있도록 논리적으로 데이터를 삭제하는 것을 의미합니다.
-`Soft Delete`는 물리적인 데이터 삭제로 발생할 수 있는 문제를 방지하거나 삭제된 데이터들을 보관하여 데이터로써 활용할 필요나 가치가 있는 경우에 사용됩니다.
+`Soft Delete`는 물리적인 데이터 삭제로 발생할 수 있는 문제를 방지하고 쉽게 복원할 필요가 있거나 
+삭제된 데이터들을 보관하여 데이터로써 활용할 필요나 가치가 있는 경우에 사용됩니다.
 
 삭제된 데이터를 구분하기 위한 컬럼으로 다음의 데이터 타입을 사용할 수 있습니다.
 - `deleted(boolean, int)` 컬럼의 값이 true 또는 1인 경우
@@ -14,27 +15,27 @@ update 쿼리를 통해 상태를 변경하여 삭제된 데이터로 구분할 
 
 `Soft Delete`와 `Hard Delete`를 여러가지 관점에서 비교해보겠습니다.
 
-|                   | Soft Delete                                                   | Hard Delete                       | comment                                                                                          |
-|-------------------|---------------------------------------------------------------|-----------------------------------|--------------------------------------------------------------------------------------------------|
-| 삭제                | UPDATE table SET deleted = true WHERE id = ?              | DELETE table FROM WHERE id = ?    | `Soft Delete`는 삭제 구분 값을 수정하여 논리적으로 데이터를 삭제합니다.                                                  |
-| 조회                | SELECT * FROM table WHERE deleted = false                 | SELECT * FROM table               | `Soft Delete`는 모든 조회 쿼리에 deleted = false 조건이 필요합니다.                                            |
-| 복원                | UPDATE table SET deleted = false WHERE id = ?             | 백업 또는 쿼리 로그를 통해 복원합니다.            | `Hard Delete`는 백업과 장애 발생 시점의 간격과 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.                                      |
-| 디스크 사용량           | 삭제시 테이블의 디스크 사용량이 감소하지 않습니다.                                  | 삭제시 테이블의 디스크 사용량이 감소합니다.          | `Soft Delete`는 지속적으로 테이블의 디스크 사용량이 증가합니다.                                                          |
-| unique constraint | CREATE UNIQUE INDEX index ON table(column1, column2, ... column_n) WHERE deleted = false | ALTER TABLE table ADD CONSTRAINT constraint UNIQUE (column1, column2, ... column_n) | `Sofe Delete`는 `partial index`를 사용하거나 지원하지 않는 DBMS는 삭제 구분 컬럼으로 timestamp를 사용하고 index 구성 컬럼에 포함합니다. |
-| on delete cascade | delete 쿼리가 아닌 update 쿼리로 삭제하기 때문에 사용할 수 없다. | ALTER TABLE child ADD CONSTRAINT constraint FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE | `Soft Delete`는 cascade 삭제를 애플리케이션 또는 데이터베이스 트리거로 직접 구현해야합니다.                         |
+|                   | Soft Delete                                                   | Hard Delete                       |
+|-------------------|---------------------------------------------------------------|-----------------------------------|
+| 삭제                | UPDATE table SET deleted = true WHERE id = ?              | DELETE table FROM WHERE id = ? |
+| 조회                | SELECT * FROM table WHERE deleted = false                 | SELECT * FROM table |
+| 복원                | UPDATE table SET deleted = false WHERE id = ?             | 백업 또는 쿼리 로그를 통해 복원합니다. |
+| 디스크 사용량           | 삭제시 테이블의 디스크 사용량이 감소하지 않습니다.                                  | 삭제시 테이블의 디스크 사용량이 감소합니다. |
+| unique constraint | CREATE UNIQUE INDEX index ON table(column1, column2, ... column_n) WHERE deleted = false | ALTER TABLE table ADD CONSTRAINT constraint UNIQUE (column1, column2, ... column_n) |
+| on delete cascade | delete 쿼리가 아닌 update 쿼리로 삭제하기 때문에 사용할 수 없다. | ALTER TABLE child ADD CONSTRAINT constraint FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE |
 
-### 삭제
+### 삭제(`soft delete` > `hard delete`)
 `Soft Delete`의 삭제는 update 쿼리로 처리되고 `Hard Delete`의 삭제는 delete 쿼리로 처리됩니다. update와 delete 쿼리 모두 exclusive lock을 획득하지만 
-delete 쿼리는 테이블의 레코드와 인덱스의 노드를 삭제 처리해야하는 반면 update 쿼리는 삭제 구분 컬럼만을 변경하기 때문에 속도를 비교한다면 `Soft Delete`가 더 유리하고 볼 수 있습니다.
+delete 쿼리는 테이블의 레코드와 인덱스의 노드를 삭제 처리해야하는 반면 update 쿼리는 삭제 구분 컬럼만을 변경하기 때문에 조금 더 빠르게 처리할 수 있습니다.
 
-### 조회
+### 조회(`soft delete` < `hard delete`)
 `Soft Delete`를 사용하면 삭제된 데이터를 제외해야 하기 때문에 모든 조회 쿼리의 where, on절에 삭제된 데이터를 제외하는 조건이 포함되어야 합니다.
 조회 쿼리에 조건을 누락하게 되면 애플리케이션이 잘못된 결과를 반환할 수 있지만 이는 개발자가 너무나도 실수하기 쉬운 부분이기 때문에 항상 주의가 필요하게 됩니다.
 
-### 복원
-TODO
+### 복원(`soft delete` > `hard delete`)
+`Soft Delete`를 사용하면 삭제 구분 값을 변경하여 간단하게 복원할 수 있지만 `Hard Delete`는 백업과 장애 발생 시점의 간격과 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.
 
-### 디스크 사용량
+### 디스크 사용량(`soft delete` < `hard delete`)
 `Soft Delete` 를 사용할 때 큰 단점은 바로 테이블과 인덱스에서 삭제된 데이터가 물리적으로 제거되지 않는다는 점입니다.
 사용중인 DBMS의 `partial index` 지원 유무에 따라 인덱스의 사용량은 다를 수 있지만 데이터가 물리적으로 삭제되지 않기 때문에 
 지속적으로 디스크 사용량이 증가하고 데이터를 조회하는 과정에서 삭제된 데이터들이 함께 조회되기 때문에 조회 성능이 저하될 수 있습니다.
@@ -175,7 +176,7 @@ Execution Time: 12.289 ms
 > 테이블의 용량이 매우 작거나 거의 모든 테이블을 조회하는 경우 index를 통해 data block에 접근하는 것보다 sequential scan을 사용하는 것이 더 빠르기 때문에 optimizer가 index scan을 사용하지 않을 수도 있습니다.
 
 
-### Unique Constraint
+### Unique Constraint(`Soft Delete` <= `Hard Delete`)
 `Soft Delete`를 사용하면 남아있는 삭제된 데이터로 인해 컬럼의 값이 중복되어 unique constraint를 위반하게 될 수 있습니다.
 
 `partial index` 지원 유무에 따른 unique constraint 적용 방법을 살펴보겠습니다.
@@ -202,6 +203,7 @@ DETAIL:  Key (deleted_at, name)=(1970-01-01 00:00:00, 삭제된 데이터가 아
 
 `partial index`를 지원하지 않는 경우 삭제된 데이터로 인해 unique constraint를 위반할 수 있습니다. 삭제 구분 컬럼의 데이터 타입을 timestamp로 사용하여
 unique constraint 구성 컬럼에 포함시켜 값이 중복되지 않도록 합니다. null 값은 unique constraint을 위반하지 않기 때문에 삭제되지 않은 데이터는 epoch time(1970년 1월 1일 00:00:00)을 사용합니다.
+unique index 구성 컬럼에 삭제 구분 컬럼이 포함되어 인덱스의 사이즈가 불필요하게 증가합니다.
 
 ```postgresql
 CREATE TABLE foo
@@ -230,7 +232,10 @@ unique constraint에는 필터링 조건을 설정할 수 없지만 `partial ind
 >
 > unique constraint를 생성하면 내부적으로 unique index를 생성하여 처리하기 때문에 unique constraint와 unique index는 동일하게 작동합니다.
 
-### On Delete Cascade
+### On Delete Cascade(`Soft Delete` < `Hard Delete`)
+
+`Soft Delete`는 cascade 삭제를 애플리케이션 또는 데이터베이스 트리거로 직접 구현해야합니다.
+
 TODO
 
 ## JPA + Hibernate 개발 환경에서의 구현
@@ -772,7 +777,7 @@ void 삭제처리된_부모엔티티를_지연로딩으로_조회하면_데이�
 
 삭제된 부모 엔티티를 Lazy Loading할 때 데이터베이스에는 참조 중인 외래키가 존재하지만 조회된 엔티티가 없어 일관성 불일치로 인해 EntityNotFoundException 예외가 발생합니다.
 부모 엔티티 연관관계 매핑에 @NotFound(action = NotFoundAction.IGNORE)을 적용하여 EntityNotFoundException 예외 발생을 막을 수 있지만 조회 결과가 없는 경우 
-프록시 객체가 아닌 null을 주입하기 위해 패치 타입이 Lazy로 설정되어 있어도 무시되어 Eager로 간주되기 때문에 성능 문제가 발생할 수 있고 객체와 데이터베이스 상태의 일관성 불일치를 해결할 수 없습니다.
+프록시 객체가 아닌 null을 주입하기 위해 패치 타입이 Lazy로 설정되어 있어도 무시되어 Eager로 간주되기 때문에 N + 1 발생으로 인한 성능 문제가 발생할 수 있고 객체와 데이터베이스 상태의 일관성 불일치를 해결할 수 없습니다.
 
 ```java
 @Test
@@ -1006,7 +1011,7 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑하�
 
     Posts postTx1 = em1.find(Posts.class, post.getId());
 
-    if (CollectionUtils.isEmpty(postTx1.getComments())) {
+    if (postTx1.getComments().isEmpty()) {
         postTx1.delete();
     }
 
@@ -1105,7 +1110,7 @@ COMMIT;
 ### 해결방안
 
 `Hard Delete`를 사용하는 경우 foreign key constraint에 의해 참조중인 데이터가 존재하면 삭제되지 않거나 cascade 삭제되고 존재하지 않는 참조하는 경우 에러가 발생하지만
-`Soft Delete`는 삭제와 삭제된 데이터를 참조하더라도 foreign key constraint 위반이 발생하지 않기 때문에 별도의 처리가 필요하게됩니다.
+`Soft Delete`는 삭제와 삭제된 데이터를 참조하더라도 foreign key constraint 위반이 발생하지 않기 때문에 삭제 전략에 따라 별도의 로직과 동시성 처리가 필요합니다.
 
 #### 프록시 객체를 통한 매핑을 사용하지 않고 삭제 전략에 따라 로직을 구현한다.
 ```java
@@ -1165,7 +1170,7 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할�
 
     Posts postTx1 = em1.find(Posts.class, post.getId());
 
-    if (CollectionUtils.isEmpty(postTx1.getComments())) {
+    if (postTx1.getComments().isEmpty()) {
         postTx1.delete();
     }
 
@@ -1319,7 +1324,7 @@ void 트랜잭션_경합조건에_따라_삭제처리된_데이터를_매핑할�
             Collections.singletonMap(AvailableSettings.JPA_LOCK_TIMEOUT, 2000L)
         );
     
-        if (CollectionUtils.isEmpty(postTx1.getComments())) {
+        if (postTx1.getComments().isEmpty()) {
             postTx1.delete();
         }
     
@@ -1424,17 +1429,12 @@ BEGIN; -- tx1
 COMMIT;
 ```
 
-비관적 락에 의해 이미 다른 트랜잭션에 의해 X락이 획득된 경우 S락을 획득하지 못해 순차적으로 트랜잭션이 수행됩니다. 
-
-#### 그 외 다른 방법들
-
-동시성 문제를 데이터베이스에서 락을 통해 처리할 수 있지만 애플리케이션 내부에서 synchronous block을 사용하여 동일 리소스에 대한 쓰레드 동기화를 수행하거나 
-여러개의 애플리케이션이 클러스터링된 환경에서 분산 락을 처리하기 위해 redis를 사용하는 등 주어진 환경과 상황에 따라 가장 적합한 방법을 사용하는 것이 좋습니다.
+비관적 락에 의해 이미 다른 트랜잭션에 의해 exclusive lock이 획득된 경우 share lock락을 획득하지 못해 순차적으로 트랜잭션이 수행됩니다. 
 
 ## 마무리
 `Soft Delete`를 구현하기 위해 단순히 삭제 구분 컬럼 하나를 추가한 것만으로 잘 구현했다고 볼 수는 없습니다.
-애플리케이션의 ORM 프레임워크 사용 유무에 따라 구현 방법이 달라질 수 있고 적용하면서 생길 수 있는 문제점을 파악하고 해결해야하기 때문입니다.
-전체적으로 `Soft Delete` 또는 `Hard Delete` 중 하나를 전체적으로 사용하기보다는 필요에 따라 적합한 것을 사용하는 것이 좋습니다.
+애플리케이션의 ORM 프레임워크 사용 유무에 따라 구현 방법이 달라질 수 있고 적용하면서 발생할 수 있는 문제점을 파악하고 해결해야하기 때문입니다.
+전체적으로 `Soft Delete`를 사용하기보다는 적용이 필요한 부분에 한해서 사용하는 것이 좋다고 생각됩니다.
 
 ### references
 - https://www.postgresql.org/docs/14/sql-vacuum.html
