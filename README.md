@@ -1041,29 +1041,44 @@ COMMIT;
 ### 해결방안
 
 ```java
+// 잘못된 경우
 Posts post = entityManager.getReference(Posts.class, id));
-Comments comment = new Comments("우와아~ 집에 갑시다.", post); // X
+Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+
+post.delete();
+
+// 올바른 경우
+Posts post = entityManager.find(Posts.class, id));
+Comments comment = new Comments("우와아~ 집에 갑시다.", post);
+
+if (posts.getComments().isEmpty()) {
+        post.delete();
+}
 ```
-Hard Delete를 사용하는 경우 foreign key 제약조건에 의해 EntityNotFoundException 예외가 발생하지 않습니다. Soft Delete에서는
-delete 쿼리로 인한 물리적인 데이터 삭제가 이루어지지 않기 때문에 삭제 처리되더라도 foreign key constraint를 위반하지 않기 때문에
-외래키로 설정될 수 있게 되면서 해당 문제가 발생할 수 있는 것입니다. 그러므로 반드시 프록시 객체를 주입하여 외래키를 설정해서는 안됩니다.
-또한 현재 트랜잭션에서 삭제 처리중인 데이터를 다른 트랜잭션에서 조회하여 외래키로 설정할 수 없도록 방지해야합니다.
+`Hard Delete`를 사용하는 경우 foreign key constraint에 의해 참조중인 데이터가 존재하면 삭제되지 않거나 cascade 삭제되고 존재하지 않는 참조하는 경우 에러가 발생하지만 
+`Soft Delete`는 삭제와 삭제된 데이터를 참조하더라도 foreign key constraint 위반이 발생하지 않기 때문에 별도의 처리가 필요하게됩니다.
+객체와 데이터베이스의 일관성 불일치 문제를 해결하기 위해 연관관계 매핑에 사용되는 엔티티는 프록시 객체로 사용하지 않고 조회한 persist 상태의 엔티티를 사용하며 매핑 중인 자식 엔티티가 존재하는 경우
+삭제하지 않거나 cascade 삭제해야합니다. 또한 트랜잭션 race condition에 따라 삭제된 부모 엔티티를 참조할 수 있기 때문에 락을 통해 동시성 문제를 해결해야합니다.
 
 #### Optimistic Locking
+
+낙관적 락은 대부분의 경우 트랜젝션의 충돌이 일어나지 않는다는 낙관적 가정을 하는 기법입니다. 데이터베이스 레벨에서 처리하는 것이 아닌 커밋 이후 시점과 조회 시점의 version 정보와 
+비교하여 일치하지 않는 경우 다른 트랜잭션에서의 변경이 일어났으므로 예외를 발생시켜 롤백하는 애플리케이션 레벨에서 처리하는 방식입니다. 충돌이 발생하면
+예외가 발생하고 롤백이 발생하기 때문에 트랜잭션 충돌이 자주 발생하는 곳에는 사용이 적합하지 않습니다.
 
 ```java
 @Version
 private long version;
 ```
 
-낙관적 락을 사용하기 위해 엔티티 클래스에 version 필드를 추가합니다. 엔티티를 대상으로 update 쿼리가 발생하는 경우
-version을 증가시키고 조회 시점의 version과 다른 경우 OptimisticLockException 예외를 발생합니다.
+낙관적 락을 사용하기 위해 엔티티에 version 필드를 추가합니다. 엔티티를 대상으로 update 쿼리가 발생하는 경우
+version을 증가시키고 조회 시점의 version과 비교하여 일치하지 않는 경우 OptimisticLockException 예외를 발생합니다.
 
 ```java
 @SQLDelete(sql = "UPDATE posts SET deleted = true, version = version + 1 WHERE id = ? AND version = ?")
 ```
 
-@SQLDelete 애노테이션을 사용하는 경우 쿼리의 조건절에 version 컬럼을 추가하고 version을 증가시킵니다.
+cascade 삭제를 위해 @SQLDelete 애노테이션을 사용한다면 마찬가지로 조건절에 version 컬럼을 추가하고 version을 증가시킵니다.
 
 ```java
 @Test
@@ -1183,9 +1198,28 @@ BEGIN; -- tx1
 COMMIT;
 ```
 
-TODO 버전 충돌 내용
+낙관적 락에 의해 다른 트랜잭션에 의해 수정된 경우 version 정보가 일치하지 않아 예외가 발생하며 롤백을 수행합니다.
 
 #### Pessimistic Locking
+
+비관적 락은 대부분의 경우 트랜젝션의 충돌이 일어난다는 비관적 가정을 하는 기법입니다. 데이터베이스 레벨에서 락(S, X)을 획득하여 처리하기 때문에 다른 트랜잭션들은
+락을 획득하기 위해 대기하게됩니다. 데이터베이스에서 락을 처리하는 비용과 데드락이 발생할 수 있기 때문에 트랜잭션 충돌이 자주 발생하지 않는다면 사용이 적합하지 않습니다.
+
+```java
+@Version
+private long version;
+```
+
+비관적 락은 데이터베이스 레벨에서 락을 획득하기 때문에 version 필드 없이도 사용할 수 있으며 락의 획득을 실패하는 경우 PessimisticLockException 예외가 발생합니다.
+version 필드를 함께 사용할 필요가 있다면 version 필드를 추가합니다.
+
+```java
+Map<String, Long> queryHint = Collections.singletonMap("javax.persistence.lock.timeout", 2000L);
+entityManager.find(Posts.class, id, LockModeType.PESSIMISTIC_WRITE, queryHint);
+```
+
+락을 획득하는 과정에서 데드락이 발생하게 되면 락을 획득하는 스레드가 대기 상태로 지속되어 애플리케이션 전체적인 성능에 영향을 미치면서 장애로 이어질 수 있기 때문에
+반드시 락을 획득하기 위한 timeout을 설정합니다.
 
 ```java
 @Test
@@ -1324,16 +1358,17 @@ BEGIN; -- tx1
 COMMIT;
 ```
 
-TODO 락 내용
+비관적 락에 의해 이미 다른 트랜잭션에 의해 X락이 획득된 경우 S락을 획득하지 못해 순차적으로 트랜잭션이 수행됩니다. 
 
 #### 그 외 다른 방법들
-Etc synchronous, distribute locking(Redis)
+
+동시성 문제를 데이터베이스에서 락을 통해 처리할 수 있지만 애플리케이션 내부에서 synchronous block을 사용하여 동일 리소스에 대한 쓰레드 동기화를 수행하거나 
+여러개의 애플리케이션이 클러스터링된 환경에서 분산 락을 처리하기 위해 redis를 사용하는 등 주어진 환경과 상황에 따라 가장 적합한 방법을 사용하는 좋다고 생각합니다.
 
 ## 마무리
-
-TODO 반드시 Soft Delete를 사용하는 것보다는 상황과 필요에 따라 Soft Delete를 사용하는 것이 좋다는 내용.
-TODO 그리고 단순히 삭제 구분 값 하나를 추가한 것만으로는 Soft Delete를 구현했다고는 볼 수 없으며 고려해야할 점들이 많다는 내용.
-
+`Soft Delete`를 구현하기 위해 단순히 삭제 구분 컬럼 하나를 추가한 것만으로 잘 구현했다고 볼 수는 없습니다.
+애플리케이션의 ORM 프레임워크 사용 유무에 따라 구현 방법이 달라질 수 있고 적용하면서 생길 수 있는 문제점을 파악하고 해결해야하기 때문입니다.
+전체적으로 `Soft Delete` 또는 `Hard Delete` 중 하나를 전체적으로 사용하기보다는 상황에 따라 적합한 방식을 사용하는 것이 좋다고 생각합니다.
 
 ### references
 - https://www.postgresql.org/docs/14/sql-vacuum.html
