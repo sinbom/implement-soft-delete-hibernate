@@ -19,7 +19,7 @@ update 쿼리를 통해 상태를 변경하여 삭제된 데이터로 구분할 
 |-------------------|---------------------------------------------------------------|-----------------------------------|
 | 삭제                | UPDATE table SET deleted = true WHERE id = ?              | DELETE table FROM WHERE id = ? |
 | 조회                | SELECT * FROM table WHERE deleted = false                 | SELECT * FROM table |
-| 복원                | UPDATE table SET deleted = false WHERE id = ?             | 백업 또는 쿼리 로그를 통해 복원합니다. |
+| 복원                | UPDATE table SET deleted = false WHERE id = ?             | 백업, 리플리케이션 또는 쿼리 로그를 통해 복원합니다. |
 | 디스크 사용량           | 삭제시 테이블의 디스크 사용량이 감소하지 않습니다.                                  | 삭제시 테이블의 디스크 사용량이 감소합니다. |
 | unique constraint | CREATE UNIQUE INDEX index ON table(column1, column2, ... column_n) WHERE deleted = false | ALTER TABLE table ADD CONSTRAINT constraint UNIQUE (column1, column2, ... column_n) |
 | on delete cascade | delete 쿼리가 아닌 update 쿼리로 삭제하기 때문에 사용할 수 없다. | ALTER TABLE child ADD CONSTRAINT constraint FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE |
@@ -33,7 +33,7 @@ delete 쿼리는 테이블의 레코드와 인덱스의 노드를 삭제 처리�
 조회 쿼리에 조건을 누락하게 되면 애플리케이션이 잘못된 결과를 반환할 수 있지만 이는 개발자가 너무나도 실수하기 쉬운 부분이기 때문에 항상 주의가 필요하게 됩니다.
 
 ### 복원(`soft delete` > `hard delete`)
-`Soft Delete`를 사용하면 삭제 구분 값을 변경하여 간단하게 복원할 수 있지만 `Hard Delete`는 백업과 장애 발생 시점의 간격과 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.
+`Soft Delete`를 사용하면 삭제 구분 값을 변경하여 간단하게 복원할 수 있지만 `Hard Delete`는 백업과 장애 발생 시점의 간격과 리플리케이션 또는 쿼리 로그 유무에 따라 복원이 어려울 수 있습니다.
 
 ### 디스크 사용량(`soft delete` < `hard delete`)
 `Soft Delete` 를 사용할 때 큰 단점은 바로 테이블과 인덱스에서 삭제된 데이터가 물리적으로 제거되지 않는다는 점입니다.
