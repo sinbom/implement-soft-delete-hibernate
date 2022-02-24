@@ -22,7 +22,7 @@ update 쿼리를 통해 상태를 변경하여 삭제된 데이터로 구분할 
 | 복원                | UPDATE table SET deleted = false WHERE id = ?             | 백업, 리플리케이션 또는 쿼리 로그를 통해 복원합니다. |
 | 디스크 사용량           | 삭제시 테이블의 디스크 사용량이 감소하지 않습니다.                                  | 삭제시 테이블의 디스크 사용량이 감소합니다. |
 | unique constraint | CREATE UNIQUE INDEX index ON table(column1, column2, ... column_n) WHERE deleted = false | ALTER TABLE table ADD CONSTRAINT constraint UNIQUE (column1, column2, ... column_n) |
-| on delete cascade | delete 쿼리가 아닌 update 쿼리로 삭제하기 때문에 사용할 수 없다. | ALTER TABLE child ADD CONSTRAINT constraint FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE |
+| on delete cascade | delete 쿼리가 아닌 update 쿼리로 삭제하기 때문에 사용할 수 없습니다. | ALTER TABLE child ADD CONSTRAINT constraint FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE |
 
 ### 삭제(`soft delete` > `hard delete`)
 `Soft Delete`의 삭제는 update 쿼리로 처리되고 `Hard Delete`의 삭제는 delete 쿼리로 처리됩니다. update와 delete 쿼리 모두 exclusive lock을 획득하지만 
